@@ -1,97 +1,61 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Switch Abstraction Interface (SAI)"
+description: "A vendor-independent C API for controlling network forwarding elements — switching ASICs, NPUs, and software switches — in a uniform manner."
 ---
 
-## Setting up
+SAI (Switch Abstraction Interface) defines a standard C API that allows control plane software to manage network forwarding elements — such as switching ASICs, NPUs, and software switches — without being tied to any specific hardware vendor. It is the foundation of [SONiC](https://github.com/sonic-net/sonic-buildimage) and is maintained by the Open Compute Project.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Understand what SAI is, who it is for, and how it fits into a switch system architecture.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Initialize an adapter, query API tables, and make your first SAI calls.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Learn how the Adapter, Adapter Host, and Control Stack relate to each other.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore all 55+ API modules with type signatures extracted from the SAI headers.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Core concepts
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Object model" icon="cubes" href="/concepts/object-model">
+    Every forwarding element is represented as a SAI object with a unique 64-bit object ID.
+  </Card>
+  <Card title="Attributes" icon="sliders" href="/concepts/attributes">
+    Attributes are key-value pairs used for all create, get, and set operations.
+  </Card>
+  <Card title="Adapter" icon="plug" href="/concepts/adapter">
+    An Adapter is a vendor-provided shared library that implements SAI for a specific ASIC.
+  </Card>
+  <Card title="Extensions" icon="flask" href="/concepts/extensions">
+    Use the extension mechanism to add experimental or vendor-specific functionality.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Implementation guides
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<CardGroup cols={2}>
+  <Card title="Switch initialization" icon="power-off" href="/guides/switch-initialization">
+    Load an adapter, initialize the API, and create a switch object.
+  </Card>
+  <Card title="Port management" icon="ethernet" href="/guides/port-management">
+    Configure physical ports, set speed and FEC, and read port counters.
+  </Card>
+  <Card title="Routing" icon="route" href="/guides/routing">
+    Set up virtual routers, router interfaces, neighbors, next hops, and routes.
+  </Card>
+  <Card title="QoS" icon="gauge-high" href="/guides/qos">
+    Configure QoS maps, queues, schedulers, buffers, policers, and WRED.
+  </Card>
+  <Card title="Security" icon="shield-halved" href="/guides/security">
+    Apply ACLs, configure MACsec, and enable IPsec encryption on tunnels.
+  </Card>
+  <Card title="Telemetry" icon="chart-line" href="/guides/telemetry">
+    Use counters, debug counters, and TAM for visibility into switch operation.
+  </Card>
+</CardGroup>

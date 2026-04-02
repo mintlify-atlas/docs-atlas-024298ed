@@ -1,0 +1,186 @@
+---
+title: "VLAN API"
+description: "Create VLAN objects and manage port membership with tagged and untagged modes using sai_vlan_api_t."
+---
+
+The VLAN API manages IEEE 802.1Q VLANs and their port membership. A VLAN object represents a broadcast domain. Ports are added to a VLAN through VLAN member objects, each of which specifies whether the port sends and receives tagged or untagged frames.
+
+## Object model
+
+Two distinct object types are involved:
+
+- **VLAN** (`SAI_OBJECT_TYPE_VLAN`) — represents a Layer 2 broadcast domain identified by a 12-bit VLAN ID (1–4094).
+- **VLAN member** (`SAI_OBJECT_TYPE_VLAN_MEMBER`) — a join record that binds a bridge port to a VLAN with a specific tagging mode.
+
+```
+VLAN (vlan_id = 100)
+ ├── VLAN_MEMBER (bridge_port = port1, tagging = TAGGED)
+ ├── VLAN_MEMBER (bridge_port = port2, tagging = UNTAGGED)
+ └── VLAN_MEMBER (bridge_port = port3, tagging = PRIORITY_TAGGED)
+```
+
+<Note>
+  Bridge ports, not raw port objects, are added to VLANs. A bridge port wraps a physical port (or LAG) and is created via the Bridge API (`SAI_OBJECT_TYPE_BRIDGE_PORT`).
+</Note>
+
+## VLAN attributes
+
+<ParamField path="SAI_VLAN_ATTR_VLAN_ID" type="sai_uint16_t">
+  The 802.1Q VLAN ID (1–4094). Mandatory on create; read-only thereafter. This attribute is also a key — only one VLAN object per VLAN ID may exist on a switch.
+</ParamField>
+
+<ParamField path="SAI_VLAN_ATTR_MEMBER_LIST" type="sai_object_list_t">
+  Read-only list of all `SAI_OBJECT_TYPE_VLAN_MEMBER` objects currently associated with this VLAN.
+</ParamField>
+
+<ParamField path="SAI_VLAN_ATTR_MAX_LEARNED_ADDRESSES" type="sai_uint32_t">
+  Limits MAC learning for this VLAN. Set to `0` (default) to disable the limit.
+</ParamField>
+
+<ParamField path="SAI_VLAN_ATTR_LEARN_DISABLE" type="bool">
+  When `true`, source MAC learning is disabled for all ports in this VLAN, overriding per-port learn settings. Default is `false`.
+</ParamField>
+
+<ParamField path="SAI_VLAN_ATTR_STP_INSTANCE" type="sai_object_id_t">
+  Associates this VLAN with a Spanning Tree Protocol instance. Defaults to the switch's default STP instance.
+</ParamField>
+
+<ParamField path="SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE" type="sai_vlan_flood_control_type_t">
+  Controls how unknown unicast traffic is flooded: `ALL` (flood to all members, default), `NONE` (drop), `L2MC_GROUP` (flood to an L2MC group), or `COMBINED` (flood to all members plus an L2MC group).
+</ParamField>
+
+<ParamField path="SAI_VLAN_ATTR_INGRESS_ACL" type="sai_object_id_t">
+  Attaches an ingress ACL table or group to this VLAN. See [ACL API](/api/acl).
+</ParamField>
+
+<ParamField path="SAI_VLAN_ATTR_EGRESS_ACL" type="sai_object_id_t">
+  Attaches an egress ACL table or group to this VLAN.
+</ParamField>
+
+<ParamField path="SAI_VLAN_ATTR_META_DATA" type="sai_uint32_t">
+  User-defined metadata tag for ACL matching.
+</ParamField>
+
+## VLAN member attributes
+
+<ParamField path="SAI_VLAN_MEMBER_ATTR_VLAN_ID" type="sai_object_id_t">
+  The parent VLAN object. Mandatory on create; read-only thereafter.
+</ParamField>
+
+<ParamField path="SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID" type="sai_object_id_t">
+  The bridge port being added to the VLAN. Valid only for `.1Q` bridge ports. Mandatory on create; read-only thereafter.
+</ParamField>
+
+<ParamField path="SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE" type="sai_vlan_tagging_mode_t">
+  Controls the VLAN tag behavior on egress. Default is `SAI_VLAN_TAGGING_MODE_UNTAGGED`. Settable after create.
+</ParamField>
+
+## Tagged vs. untagged membership
+
+The `sai_vlan_tagging_mode_t` enum has three values:
+
+| Mode | Ingress | Egress |
+|---|---|---|
+| `SAI_VLAN_TAGGING_MODE_UNTAGGED` | Accept untagged frames; assign the port's PVID | Strip VLAN tag before sending |
+| `SAI_VLAN_TAGGING_MODE_TAGGED` | Accept tagged frames matching this VLAN ID | Preserve VLAN tag when sending |
+| `SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED` | Accept priority-tagged frames (VID=0) | Send with VID=0, PCP preserved |
+
+<Tip>
+  Access ports (connected to end hosts) typically use `UNTAGGED`. Trunk ports (between switches) use `TAGGED` and are members of multiple VLANs simultaneously, each requiring its own VLAN member object.
+</Tip>
+
+## API table: `sai_vlan_api_t`
+
+Obtain a pointer via `sai_api_query(SAI_API_VLAN, ...)`.
+
+| Function | Description |
+|---|---|
+| `create_vlan` | Create a VLAN object |
+| `remove_vlan` | Remove a VLAN object |
+| `set_vlan_attribute` | Update a mutable VLAN attribute |
+| `get_vlan_attribute` | Read one or more VLAN attributes |
+| `create_vlan_member` | Add a bridge port to a VLAN |
+| `remove_vlan_member` | Remove a bridge port from a VLAN |
+| `set_vlan_member_attribute` | Update a mutable member attribute (e.g., tagging mode) |
+| `get_vlan_member_attribute` | Read member attributes |
+| `get_vlan_stats` | Read per-VLAN traffic counters |
+| `clear_vlan_stats` | Clear per-VLAN traffic counters |
+
+## VLAN statistics
+
+The `get_vlan_stats` function returns counters from `sai_vlan_stat_t`:
+
+| Counter | Description |
+|---|---|
+| `SAI_VLAN_STAT_IN_OCTETS` | Ingress bytes |
+| `SAI_VLAN_STAT_IN_PACKETS` | Ingress packets |
+| `SAI_VLAN_STAT_OUT_OCTETS` | Egress bytes |
+| `SAI_VLAN_STAT_OUT_PACKETS` | Egress packets |
+| `SAI_VLAN_STAT_IN_DISCARDS` | Ingress discards |
+| `SAI_VLAN_STAT_OUT_DISCARDS` | Egress discards |
+
+## Example: creating a VLAN and adding ports as members
+
+```c
+#include <sai.h>
+
+sai_vlan_api_t *vlan_api;
+sai_api_query(SAI_API_VLAN, (void **)&vlan_api);
+
+/* --- Create VLAN 100 --- */
+sai_object_id_t vlan100_id;
+sai_attribute_t vlan_attr;
+vlan_attr.id         = SAI_VLAN_ATTR_VLAN_ID;
+vlan_attr.value.u16  = 100;
+
+sai_status_t status = vlan_api->create_vlan(&vlan100_id, switch_id, 1, &vlan_attr);
+if (status != SAI_STATUS_SUCCESS) {
+    /* handle error */
+}
+
+/* --- Add port1 as an untagged (access) member --- */
+sai_object_id_t member1_id;
+sai_attribute_t member_attrs[3];
+
+member_attrs[0].id        = SAI_VLAN_MEMBER_ATTR_VLAN_ID;
+member_attrs[0].value.oid = vlan100_id;
+
+member_attrs[1].id        = SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID;
+member_attrs[1].value.oid = bp_port1_id;   /* bridge port wrapping port1 */
+
+member_attrs[2].id        = SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE;
+member_attrs[2].value.s32 = SAI_VLAN_TAGGING_MODE_UNTAGGED;
+
+vlan_api->create_vlan_member(&member1_id, switch_id, 3, member_attrs);
+
+/* --- Add port2 as a tagged (trunk) member --- */
+sai_object_id_t member2_id;
+
+member_attrs[1].value.oid = bp_port2_id;
+member_attrs[2].value.s32 = SAI_VLAN_TAGGING_MODE_TAGGED;
+
+vlan_api->create_vlan_member(&member2_id, switch_id, 3, member_attrs);
+
+/* --- Read VLAN member list --- */
+sai_object_list_t member_list;
+sai_object_id_t   member_ids[32];
+member_list.count = 32;
+member_list.list  = member_ids;
+
+sai_attribute_t get_attr;
+get_attr.id            = SAI_VLAN_ATTR_MEMBER_LIST;
+get_attr.value.objlist = member_list;
+
+vlan_api->get_vlan_attribute(vlan100_id, 1, &get_attr);
+/* get_attr.value.objlist.count now holds the actual number of members */
+```
+
+<Warning>
+  Remove all VLAN members before removing the VLAN object. Removing a VLAN that still has members will return an error on most adapters.
+</Warning>
+
+## Related APIs
+
+- [FDB API](/api/fdb) — MAC entries reference VLAN objects via `bv_id`
+- [ACL API](/api/acl) — attach ACLs to VLANs via `SAI_VLAN_ATTR_INGRESS_ACL` / `SAI_VLAN_ATTR_EGRESS_ACL`
+- [Route API](/api/route) — VLAN router interfaces enable Layer 3 routing on a VLAN

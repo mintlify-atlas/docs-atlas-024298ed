@@ -1,0 +1,243 @@
+---
+title: "Changelog"
+description: "A summary of every SAI release from 1.16.1 back through 1.5, including major API additions and breaking changes."
+---
+
+This page summarizes the key changes in each SAI release. Each entry highlights notable new features, API additions, and breaking changes. For the full list of PRs in a given release, follow the link to the corresponding release notes document.
+
+<Tip>
+  For releases older than those listed here, visit the [SAI GitHub releases page](https://github.com/opencomputeproject/SAI/releases) and the [doc/ directory](https://github.com/opencomputeproject/SAI/tree/master/doc) on GitHub.
+</Tip>
+
+<AccordionGroup>
+
+  <Accordion title="SAI 1.16.1">
+
+    **Release notes:** [SAI_1.16.1_ReleaseNotes.md](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.16.1_ReleaseNotes.md)
+
+    Key changes from 1.15.1 → 1.16.1:
+
+    - **Packet trimming API** ([PR #2077](https://github.com/opencomputeproject/SAI/pull/2077)): New API for packet trimming with optional DSCP resolution from TC.
+    - **Prefix compression** ([PR #2045](https://github.com/opencomputeproject/SAI/pull/2045)): New prefix compression feature for forwarding table efficiency.
+    - **EVPN multi-home support** ([PR #2084](https://github.com/opencomputeproject/SAI/pull/2084)): Multi-homing support for EVPN deployments.
+    - **Next hop group with members** ([PR #2013](https://github.com/opencomputeproject/SAI/pull/2013)): Create next hop groups with an inline member list in a single call.
+    - **Round-robin packet spraying** ([PR #2078](https://github.com/opencomputeproject/SAI/pull/2078)): Per-ECMP/LAG packet spraying selection.
+    - **Synchronous Ethernet** ([PR #2146](https://github.com/opencomputeproject/SAI/pull/2146)): New SAI proposal for SyncE support.
+    - **TAM stream telemetry** ([PR #2089](https://github.com/opencomputeproject/SAI/pull/2089)): Streaming telemetry via TAM.
+    - **Extended port oper status notification** ([PR #2087](https://github.com/opencomputeproject/SAI/pull/2087)): Richer port status notifications including error classification.
+    - **LAG member weights** ([PR #2143](https://github.com/opencomputeproject/SAI/pull/2143)): Weight attribute on LAG members for weighted load balancing.
+    - **Switch-level PTP control** ([PR #2148](https://github.com/opencomputeproject/SAI/pull/2148)): Single switch attribute to enable or disable PTP globally.
+    - **Hashing enhancements for RoCE** ([PR #2144](https://github.com/opencomputeproject/SAI/pull/2144)): Improved hash distribution for RoCE traffic.
+    - **Custom vendor headers** ([PR #2122](https://github.com/opencomputeproject/SAI/pull/2122)): Mechanism to add vendor-specific packet headers.
+    - **Per-attribute API version tracking** ([PR #2100](https://github.com/opencomputeproject/SAI/pull/2100)): Each attribute now records the SAI API version in which it was introduced.
+    - **DASH updates**: New ENI flow table ID attribute, outbound portmap, ENI VM/FNIC mode, and DASH flow/tunnel updates.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.15.1">
+
+    **Release notes:** [SAI_1.15.1_ReleaseNotes.md](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.15.1_ReleaseNotes.md)
+
+    Key changes from 1.14.0 → 1.15.1:
+
+    - **DASH HA session APIs** ([PR #2007](https://github.com/opencomputeproject/SAI/pull/2007)): Basic HA session APIs covering concepts, state management, and inline sync.
+    - **DASH flow resimulation** ([PR #2004](https://github.com/opencomputeproject/SAI/pull/2004)): New APIs for re-simulating DASH flows.
+    - **DASH bulk sync and flow reconcile** ([PR #2014](https://github.com/opencomputeproject/SAI/pull/2014)): Bulk sync API, flow reconcile API, and related counters.
+    - **DASH appliance object APIs** ([PR #2073](https://github.com/opencomputeproject/SAI/pull/2073)): New appliance object type for DASH.
+    - **DASH Flow API for connection tracking** ([PR #2064](https://github.com/opencomputeproject/SAI/pull/2064)): Full DASH flow API with connection state tracking.
+    - **DASH routing group API** ([PR #2026](https://github.com/opencomputeproject/SAI/pull/2026)): New routing group abstraction for DASH pipelines.
+    - **DASH tunnel API** ([PR #2025](https://github.com/opencomputeproject/SAI/pull/2025)): Tunnel objects for DASH encap/decap.
+    - **ICMP echo offload** ([PR #2020](https://github.com/opencomputeproject/SAI/pull/2020)): SAI proposal to offload ICMP echo handling to hardware.
+    - **SER (Soft Error Recovery) support** ([PR #1993](https://github.com/opencomputeproject/SAI/pull/1993)): New API to handle hardware soft errors.
+    - **8-lane breakout mode enum** ([PR #2009](https://github.com/opencomputeproject/SAI/pull/2009)): Port breakout support extended to 8 lanes.
+    - **sFlow truncation support** ([PR #2065](https://github.com/opencomputeproject/SAI/pull/2065)): Configurable truncation of sFlow-sampled packets.
+    - **HW-based FRR** ([PR #2071](https://github.com/opencomputeproject/SAI/pull/2071)): Hardware-assisted Fast Reroute support.
+    - **Bulk APIs for ingress priority group and queue** ([PR #2076](https://github.com/opencomputeproject/SAI/pull/2076)): Batch create/remove for QoS objects.
+    - **Counter enhancements** ([PR #1941](https://github.com/opencomputeproject/SAI/pull/1941)): Granular counter subscription via TAM.
+    - **Hostif subnet route trap** ([PR #2066](https://github.com/opencomputeproject/SAI/pull/2066)): New host interface trap type for subnet routes.
+    - **Unreliable LOS** ([PR #2063](https://github.com/opencomputeproject/SAI/pull/2063)): Configurable handling of unreliable loss-of-signal on ports.
+    - **Extensions moved to 0x20000000 range** ([PR #2028](https://github.com/opencomputeproject/SAI/pull/2028)): Breaking change — extension SAI and API enum values relocated.
+    - **Custom range attributes for vendors** ([PR #2017](https://github.com/opencomputeproject/SAI/pull/2017)): Vendors can now define custom range attributes in extension headers.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.14.0">
+
+    **Release notes:** [SAI_1.14.0_ReleaseNotes.md](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.14.0_ReleaseNotes.md)
+
+    Key changes from 1.13.3 → 1.14.0:
+
+    - **PoE support** ([PR #1977](https://github.com/opencomputeproject/SAI/pull/1977)): New Power-over-Ethernet API for managing PSE and PD devices.
+    - **TAM granular counter subscription** ([PR #1670](https://github.com/opencomputeproject/SAI/pull/1670)): Subscribe to individual counter updates via TAM.
+    - **TAM mirror-on-drop to local host via Generic Netlink** ([PR #1986](https://github.com/opencomputeproject/SAI/pull/1986)): Dropped packets can be mirrored to the CPU via Generic Netlink.
+    - **ARS (Adaptive Routing and Switching) enhancements** ([PR #1978](https://github.com/opencomputeproject/SAI/pull/1978), [PR #1988](https://github.com/opencomputeproject/SAI/pull/1988)): Quantization and additional ARS configuration attributes.
+    - **Queue delay watermark** ([PR #1920](https://github.com/opencomputeproject/SAI/pull/1920)): New watermark counter tracking queue delay.
+    - **Cable diagnostics** ([PR #1894](https://github.com/opencomputeproject/SAI/pull/1894)): Port attribute for cable diagnostic data.
+    - **L3 rewrite disable attributes** ([PR #1924](https://github.com/opencomputeproject/SAI/pull/1924)): Per-port attributes to suppress L3 rewrite operations.
+    - **MAC remote loopback** ([PR #1934](https://github.com/opencomputeproject/SAI/pull/1934)): New loopback mode enum for remote MAC loopback.
+    - **Bulk-API for router interface (RIF)** ([PR #1891](https://github.com/opencomputeproject/SAI/pull/1891)): Batch create/remove for RIF objects.
+    - **ACL match fields for VRF and IPMC** ([PR #1952](https://github.com/opencomputeproject/SAI/pull/1952)): `SAI_ACL_ENTRY_ATTR_FIELD_VRF_ID` and `SAI_ACL_ENTRY_ATTR_FIELD_IPMC_NPU_META_DST_HIT` added.
+    - **Pre-ingress ACL capability query** ([PR #1984](https://github.com/opencomputeproject/SAI/pull/1984)): Attribute to query Pre-Ingress ACL stage capability.
+    - **Tunnel decapsulation before L2/L3** ([PR #1938](https://github.com/opencomputeproject/SAI/pull/1938)): Pipeline ordering change for tunnel termination.
+    - **DASH Private Link attributes** ([PR #1907](https://github.com/opencomputeproject/SAI/pull/1907)): New attributes for DASH Private Link scenarios.
+    - **DASH DSCP mode** ([PR #1981](https://github.com/opencomputeproject/SAI/pull/1981)): DSCP handling mode attribute for DASH pipelines.
+    - **TX/RX precoding in SERDES** ([PR #1903](https://github.com/opencomputeproject/SAI/pull/1903)): Precoding attribute added to the SERDES attribute list.
+    - **Notifications stable enum** ([PR #1913](https://github.com/opencomputeproject/SAI/pull/1913)): Notification and pointer enum values are now stable across releases.
+    - **Port stat extensions** ([PR #1947](https://github.com/opencomputeproject/SAI/pull/1947)): Support for vendor-defined port statistics extensions.
+    - **Relaxed condition type** ([PR #1893](https://github.com/opencomputeproject/SAI/pull/1893)): New condition type allows attributes with relaxed dependency constraints.
+    - **Metadata query API version** ([PR #1898](https://github.com/opencomputeproject/SAI/pull/1898)): Metadata library now exposes the SAI API version it was built against.
+    - **FDB flush with no attributes** ([PR #1918](https://github.com/opencomputeproject/SAI/pull/1918)): Calling flush with no attributes now flushes all dynamic FDB entries.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.13.3">
+
+    **Release notes:** [SAI_1.13.3_ReleaseNotes.md](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.13.3_ReleaseNotes.md)
+
+    Key changes from 1.12.0 → 1.13.3:
+
+    - **Chained ACL** ([PR #1787](https://github.com/opencomputeproject/SAI/pull/1787)): ACL tables can now be chained; capability queried via ([PR #1815](https://github.com/opencomputeproject/SAI/pull/1815)).
+    - **HW/FW failure notifications** ([PR #1777](https://github.com/opencomputeproject/SAI/pull/1777)): New notification to alert the NOS about hardware and firmware failures.
+    - **TWAMP-LIGHT API** ([PR #1786](https://github.com/opencomputeproject/SAI/pull/1786)): New API for Two-Way Active Measurement Protocol Light offload.
+    - **SAI path tracing for midpoint nodes** ([PR #1841](https://github.com/opencomputeproject/SAI/pull/1841)): New attributes for in-network path tracing (INT/IOAM) at midpoint nodes.
+    - **Bulk nexthop APIs** ([PR #1798](https://github.com/opencomputeproject/SAI/pull/1798)): Batch create/remove for nexthop objects.
+    - **DASH metering policies** ([PR #1819](https://github.com/opencomputeproject/SAI/pull/1819)): New metering policy objects for DASH pipelines.
+    - **CRM for DASH** ([PR #1785](https://github.com/opencomputeproject/SAI/pull/1785)): Critical Resource Monitoring counters for DASH objects.
+    - **CRM for ECMP and VoQ system** ([PR #1883](https://github.com/opencomputeproject/SAI/pull/1883)): CRM counters extended to cover ECMP and Virtual Output Queue systems.
+    - **VoQ switch isolation** ([PR #1793](https://github.com/opencomputeproject/SAI/pull/1793)): Ability to isolate a VoQ switch from the fabric.
+    - **Independent module support** ([PR #1824](https://github.com/opencomputeproject/SAI/pull/1824)): Support for pluggable/independent optical modules.
+    - **Inner MAC ACL match fields** ([PR #1828](https://github.com/opencomputeproject/SAI/pull/1828)): ACL can now match on inner source and destination MAC addresses.
+    - **Tunnel term priority** ([PR #1849](https://github.com/opencomputeproject/SAI/pull/1849)): Priority attribute for tunnel termination table entries.
+    - **OPER_FEC attribute** ([PR #1801](https://github.com/opencomputeproject/SAI/pull/1801)): Operational FEC mode readable from the port.
+    - **WRED values for large buffer systems** ([PR #1791](https://github.com/opencomputeproject/SAI/pull/1791)): WRED threshold range extended for large-buffer switches.
+    - **IP prefix list type** — `sai_u32_range_t` and IP prefix list support extended from 1.12.0 ([PR #1797](https://github.com/opencomputeproject/SAI/pull/1797)).
+    - **PCS datapath select attribute** ([PR #1816](https://github.com/opencomputeproject/SAI/pull/1816)): New port attribute for PCS datapath selection.
+    - **RX signal quality attributes** ([PR #1847](https://github.com/opencomputeproject/SAI/pull/1847)): `RX_FREQUENCY_OFFSET_PPM`, `RX_SNR`, and `FEC_CORRECTED_BITS` counters added.
+    - **Hostif trap for HTTP** ([PR #1789](https://github.com/opencomputeproject/SAI/pull/1789)): New host interface trap type for HTTP control packets.
+    - **Clear buffer pool watermark API** ([PR #1804](https://github.com/opencomputeproject/SAI/pull/1804)): Explicit API call to reset watermark counters.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.12.0">
+
+    **Release notes:** [SAI_1.12.0_ReleaseNotes.md](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.12.0_ReleaseNotes.md)
+
+    Key changes from 1.11.0 → 1.12.0:
+
+    - **DASH API** ([PR #1590](https://github.com/opencomputeproject/SAI/pull/1590)): Initial DASH (Disaggregated APIs for SONiC Hosts) API set added to SAI experimental headers.
+    - **Adaptive Routing and Switching (ARS)** ([PR #1681](https://github.com/opencomputeproject/SAI/pull/1681)): Full ARS API for dynamic load-adaptive forwarding.
+    - **Hierarchical ECMP** ([PR #1555](https://github.com/opencomputeproject/SAI/pull/1555)): Two-level ECMP hierarchy for overlay/underlay scenarios.
+    - **SRv6 VPN enhancements** ([PR #1744](https://github.com/opencomputeproject/SAI/pull/1744)): Additional SRv6 endpoint behaviors for L3VPN.
+    - **SRv6 encap support for BFD** ([PR #1759](https://github.com/opencomputeproject/SAI/pull/1759)): BFD sessions can now use SRv6 encapsulation.
+    - **ACL exact-match stage** ([PR #1717](https://github.com/opencomputeproject/SAI/pull/1717)): New ACL stage dedicated to exact-match lookup.
+    - **ACL IPv6 valid bits** ([PR #1718](https://github.com/opencomputeproject/SAI/pull/1718)): ACL table attribute to specify valid bits in a destination IPv6 address.
+    - **ACL match-type attributes** ([PR #1730](https://github.com/opencomputeproject/SAI/pull/1730)): ACL table and group attributes to identify ternary vs. exact-match type.
+    - **IP prefix list type** ([PR #1629](https://github.com/opencomputeproject/SAI/pull/1629)): New `sai_ip_prefix_list_t` attribute value type.
+    - **USXGMII interface type** ([PR #1679](https://github.com/opencomputeproject/SAI/pull/1679)): New port interface enum for USXGMII.
+    - **Port debug data capture** ([PR #1324](https://github.com/opencomputeproject/SAI/pull/1324)): Attribute to trigger and retrieve hardware debug data from a port.
+    - **Hash algorithm/offset per port** ([PR #1775](https://github.com/opencomputeproject/SAI/pull/1775)): Per-port hash algorithm and seed offset configuration.
+    - **VoQ WatchDog timer** ([PR #1779](https://github.com/opencomputeproject/SAI/pull/1779)): Configurable WDT for Virtual Output Queue systems.
+    - **Fabric switch isolation** ([PR #1780](https://github.com/opencomputeproject/SAI/pull/1780)): Ability to isolate a fabric switch from forwarding.
+    - **Hostif oper status update modes** ([PR #1646](https://github.com/opencomputeproject/SAI/pull/1646)): Configurable modes for propagating port oper status to host interfaces.
+    - **UDF L4 DST port match attribute** ([PR #1739](https://github.com/opencomputeproject/SAI/pull/1739)): `SAI_UDF_MATCH_ATTR_L4_DST_PORT_TYPE` added.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.11.0">
+
+    Key changes from 1.10.2 → 1.11.0:
+
+    - **DASH attributes for ST routing**: New DASH attributes supporting Service Tunnel routing scenarios.
+    - **ACL and QoS test expansion**: Significant expansion of PTF test coverage for ACL, QoS, and tunnel features.
+    - **VoQ system improvements**: Continued enhancements for chassis-based VoQ switch topologies.
+
+    For the full list of changes, see the [SAI 1.11.0 release notes](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.11.0_ReleaseNotes.md) on GitHub.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.10.2">
+
+    Key changes in 1.10.2:
+
+    - **Bug fixes and stability improvements** across SAI metadata, RPC tooling, and test infrastructure.
+    - **VoQ switch improvements**: Refinements to fabric port and system port handling.
+    - **Tunnel term entry validation**: Fixes and improvements to tunnel termination table attribute validation.
+
+    For the full list of changes, see the [SAI 1.10.2 release notes](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.10.2_ReleaseNotes.md) on GitHub.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.9.1">
+
+    Key changes in 1.9.1:
+
+    - **SAI-PTF test framework**: Introduction of the Python-based PTF (Packet Test Framework) harness for SAI conformance testing.
+    - **saithriftv2**: Next-generation Thrift-based RPC frontend for remote SAI calls.
+    - **VoQ (Virtual Output Queue) chassis support**: Fabric ports, system ports, and VoQ-aware scheduling introduced.
+    - **SRv6 endpoint behaviors**: Initial SRv6 My SID entry types and endpoint action enums.
+    - **MPLS in-segment action enhancements**: Additional MPLS label operation types.
+
+    For the full list of changes, see the [SAI 1.9.1 release notes](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.9.1_ReleaseNotes.md) on GitHub.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.8.1">
+
+    Key changes in 1.8.1:
+
+    - **MACSEC API**: New API module (`saimacsec.h`) for hardware MACsec offload.
+    - **IPSEC API**: New API module (`saiipsec.h`) for IPsec tunnel offload.
+    - **DTEL (Data Plane Telemetry)**: Enhancements to in-band network telemetry reporting.
+    - **Isolation group**: New isolation group object to prevent flooding between ports.
+    - **BFD async offload**: BFD session management with hardware-accelerated keepalives.
+    - **Generic programmable attribute**: Vendor-extensible generic attribute type.
+
+    For the full list of changes, see the [SAI 1.8.1 release notes](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.8.1_ReleaseNotes.md) on GitHub.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.7.1">
+
+    Key changes in 1.7.1:
+
+    - **TWAMP API**: Two-Way Active Measurement Protocol offload API.
+    - **MPLS enhancements**: New MPLS label stack manipulation operations.
+    - **TAM (Telemetry and Monitoring)**: Expanded TAM API with histogram and event reporting.
+    - **ACL enhancements**: Additional ACL match fields and action types.
+    - **FDB bulk APIs**: Batch FDB entry create, set, and remove.
+
+    For the full list of changes, see the [SAI 1.7.1 release notes](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.7.1_ReleaseNotes.md) on GitHub.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.6.3">
+
+    Key changes in 1.6.3:
+
+    - **NAT API**: New Network Address Translation API module (`sainat.h`).
+    - **Neighbor entry bulk APIs**: Batch create/remove for ARP/NDP neighbor entries.
+    - **Route entry bulk APIs**: Batch create/remove for forwarding table entries.
+    - **Debug counters**: New debug counter API for tracking packet drop reasons.
+    - **System port**: Initial system port attributes for multi-ASIC topologies.
+    - **Port pool**: Buffer pool per port object for hierarchical buffer management.
+
+    For the full list of changes, see the [SAI 1.6.3 release notes](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.6.3_ReleaseNotes.md) on GitHub.
+
+  </Accordion>
+
+  <Accordion title="SAI 1.5">
+
+    Key changes in 1.5:
+
+    - **TAM API (initial)**: Introduction of the Telemetry and Monitoring framework API.
+    - **Generic counter**: Flexible counter objects decoupled from specific SAI object types.
+    - **MPLS API**: New MPLS API module (`saimpls.h`) for label switching operations.
+    - **DTEL API**: Data Plane Telemetry API for postcard-based and watchlist-based telemetry.
+    - **Bulk route and FDB operations**: Foundation for high-performance batch table updates.
+    - **Extended attribute condition types**: OR and AND condition combinations for attribute validation.
+
+    For the full list of changes, see the [SAI 1.5 release notes](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.5_ReleaseNotes.md) on GitHub.
+
+  </Accordion>
+
+</AccordionGroup>

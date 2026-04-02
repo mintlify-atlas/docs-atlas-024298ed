@@ -1,0 +1,201 @@
+---
+title: "Tunnel API"
+description: "API for creating and managing IP tunnels including VXLAN, GRE, IP-in-IP, MPLS, SRv6, and NVGRE."
+---
+
+The SAI Tunnel API (`sai_tunnel_api_t`) provides a unified interface for encapsulating and decapsulating network traffic across overlay and underlay networks. Tunnels consist of three related object types that work together.
+
+## Object types
+
+| Object type | Description |
+|---|---|
+| `SAI_OBJECT_TYPE_TUNNEL_MAP` | Named map that translates between overlay identifiers (VLAN, VRF) and underlay identifiers (VNI) |
+| `SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY` | Individual key-value entry within a tunnel map |
+| `SAI_OBJECT_TYPE_TUNNEL` | The tunnel endpoint itself, with encap and decap attributes |
+| `SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY` | Decap rule matching incoming tunneled packets to a tunnel object |
+
+## Tunnel types (`sai_tunnel_type_t`)
+
+| Value | Description |
+|---|---|
+| `SAI_TUNNEL_TYPE_IPINIP` | IP-in-IP encapsulation (RFC 2003) |
+| `SAI_TUNNEL_TYPE_IPINIP_GRE` | GRE tunnel (RFC 2784) |
+| `SAI_TUNNEL_TYPE_VXLAN` | VXLAN overlay (RFC 7348) |
+| `SAI_TUNNEL_TYPE_MPLS` | MPLS tunnel |
+| `SAI_TUNNEL_TYPE_SRV6` | Segment Routing over IPv6 |
+| `SAI_TUNNEL_TYPE_NVGRE` | NVGRE (RFC 7637) |
+| `SAI_TUNNEL_TYPE_IPINIP_ESP` | IP-in-IP with IPsec ESP |
+| `SAI_TUNNEL_TYPE_IPINIP_UDP_ESP` | IP-in-IP with UDP-encapsulated IPsec ESP |
+| `SAI_TUNNEL_TYPE_VXLAN_UDP_ESP` | VXLAN with UDP-encapsulated IPsec ESP |
+
+## Tunnel direction
+
+A SAI tunnel object handles both directions, but each direction has its own set of attributes:
+
+- **Encap (overlay → underlay):** Packets from the overlay network are wrapped in an outer header and forwarded through the underlay. Configured with `SAI_TUNNEL_ATTR_ENCAP_*` attributes.
+- **Decap (underlay → overlay):** Packets arriving from the underlay have their outer header stripped. Matched by a `SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY`.
+
+## Tunnel map types (`sai_tunnel_map_type_t`)
+
+Tunnel maps translate between overlay and underlay identifiers. They are used primarily with VXLAN and NVGRE.
+
+| Value | Use case |
+|---|---|
+| `SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID` | Decap: map incoming VNI → VLAN |
+| `SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI` | Encap: map VLAN → outgoing VNI |
+| `SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF` | Decap: map VNI → bridge interface |
+| `SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI` | Encap: map bridge interface → VNI |
+| `SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID` | Decap: map VNI → VRF |
+| `SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI` | Encap: map VRF → VNI |
+| `SAI_TUNNEL_MAP_TYPE_VSID_TO_VLAN_ID` | NVGRE decap: map VSID → VLAN |
+| `SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VSID` | NVGRE encap: map VLAN → VSID |
+| `SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VPN_SID` | SRv6: map VRF → SRv6 VPN SID |
+| `SAI_TUNNEL_MAP_TYPE_OECN_TO_UECN` | Encap: propagate ECN from overlay to underlay |
+| `SAI_TUNNEL_MAP_TYPE_UECN_OECN_TO_OECN` | Decap: propagate ECN from underlay back to overlay |
+
+## Tunnel attributes (`sai_tunnel_attr_t`)
+
+<ParamField path="SAI_TUNNEL_ATTR_TYPE" type="sai_tunnel_type_t">
+  Tunnel type. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE" type="sai_object_id_t">
+  Router interface used for the underlay (outer) network. Mandatory for IP-in-IP, GRE, VXLAN, and SRv6 tunnel types.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_OVERLAY_INTERFACE" type="sai_object_id_t">
+  Router interface used for the overlay (inner) network. Mandatory for IP-in-IP and GRE tunnel types.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_PEER_MODE" type="sai_tunnel_peer_mode_t">
+  `SAI_TUNNEL_PEER_MODE_P2P` (single remote endpoint) or `SAI_TUNNEL_PEER_MODE_P2MP` (any remote endpoint). Default: P2MP.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_ENCAP_SRC_IP" type="sai_ip_address_t">
+  Source IP address inserted in the outer header during encapsulation.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_ENCAP_DST_IP" type="sai_ip_address_t">
+  Destination IP address for the outer header. Valid only for P2P tunnels.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_ENCAP_TTL_MODE" type="sai_tunnel_ttl_mode_t">
+  TTL handling: `SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL` (copy inner TTL to outer) or `SAI_TUNNEL_TTL_MODE_PIPE_MODEL` (use a fixed value). Default: uniform.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_ENCAP_TTL_VAL" type="sai_uint8_t">
+  TTL value inserted in the outer header when using pipe mode. Default: 255.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE" type="sai_tunnel_dscp_mode_t">
+  DSCP handling for the outer header. `UNIFORM_MODEL` copies the inner DSCP; `PIPE_MODEL` uses a fixed value. Default: uniform.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_ENCAP_DSCP_VAL" type="sai_uint8_t">
+  Fixed DSCP value (6 bits) used in pipe mode. Default: 0.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_ENCAP_GRE_KEY_VALID" type="bool">
+  Enable inserting a GRE key in the outer header. Create-only. Default: false.
+</ParamField>
+
+<ParamField path="SAI_TUNNEL_ATTR_ENCAP_GRE_KEY" type="sai_uint32_t">
+  GRE key value. Valid only when `SAI_TUNNEL_ATTR_ENCAP_GRE_KEY_VALID` is true. Default: 0.
+</ParamField>
+
+## Functions
+
+```c
+/* Tunnel map operations */
+sai_status_t create_tunnel_map(sai_object_id_t *tunnel_map_id,
+                                sai_object_id_t switch_id,
+                                uint32_t attr_count,
+                                const sai_attribute_t *attr_list);
+sai_status_t remove_tunnel_map(sai_object_id_t tunnel_map_id);
+
+/* Tunnel map entry operations */
+sai_status_t create_tunnel_map_entry(sai_object_id_t *tunnel_map_entry_id,
+                                      sai_object_id_t switch_id,
+                                      uint32_t attr_count,
+                                      const sai_attribute_t *attr_list);
+sai_status_t remove_tunnel_map_entry(sai_object_id_t tunnel_map_entry_id);
+
+/* Tunnel operations */
+sai_status_t create_tunnel(sai_object_id_t *tunnel_id,
+                            sai_object_id_t switch_id,
+                            uint32_t attr_count,
+                            const sai_attribute_t *attr_list);
+sai_status_t remove_tunnel(sai_object_id_t tunnel_id);
+sai_status_t set_tunnel_attribute(sai_object_id_t tunnel_id,
+                                   const sai_attribute_t *attr);
+sai_status_t get_tunnel_attribute(sai_object_id_t tunnel_id,
+                                   uint32_t attr_count,
+                                   sai_attribute_t *attr_list);
+
+/* Tunnel term table entry operations */
+sai_status_t create_tunnel_term_table_entry(sai_object_id_t *tunnel_term_table_entry_id,
+                                              sai_object_id_t switch_id,
+                                              uint32_t attr_count,
+                                              const sai_attribute_t *attr_list);
+sai_status_t remove_tunnel_term_table_entry(sai_object_id_t tunnel_term_table_entry_id);
+```
+
+## Example: creating a VXLAN tunnel
+
+This example creates a VXLAN tunnel with a VLAN-to-VNI map, a tunnel endpoint, and a decap term entry.
+
+```c
+/* Step 1: Create a VLAN-to-VNI tunnel map */
+sai_attribute_t map_attr;
+map_attr.id = SAI_TUNNEL_MAP_ATTR_TYPE;
+map_attr.value.s32 = SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI;
+
+sai_object_id_t encap_map_id;
+tunnel_api->create_tunnel_map(&encap_map_id, switch_id, 1, &map_attr);
+
+/* Step 2: Add a map entry: VLAN 100 → VNI 10000 */
+sai_attribute_t entry_attrs[3];
+entry_attrs[0].id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
+entry_attrs[0].value.s32 = SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI;
+entry_attrs[1].id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP;
+entry_attrs[1].value.oid = encap_map_id;
+entry_attrs[2].id = SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_KEY;
+entry_attrs[2].value.u16 = 100;
+/* VNI value attribute omitted for brevity */
+
+sai_object_id_t map_entry_id;
+tunnel_api->create_tunnel_map_entry(&map_entry_id, switch_id, 3, entry_attrs);
+
+/* Step 3: Create the VXLAN tunnel */
+sai_attribute_t tun_attrs[4];
+tun_attrs[0].id = SAI_TUNNEL_ATTR_TYPE;
+tun_attrs[0].value.s32 = SAI_TUNNEL_TYPE_VXLAN;
+tun_attrs[1].id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
+tun_attrs[1].value.oid = underlay_rif_id;
+tun_attrs[2].id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
+tun_attrs[2].value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+tun_attrs[2].value.ipaddr.addr.ip4 = vtep_ip; /* local VTEP IP */
+tun_attrs[3].id = SAI_TUNNEL_ATTR_PEER_MODE;
+tun_attrs[3].value.s32 = SAI_TUNNEL_PEER_MODE_P2MP;
+
+sai_object_id_t tunnel_id;
+tunnel_api->create_tunnel(&tunnel_id, switch_id, 4, tun_attrs);
+
+/* Step 4: Create a decap term entry to match VNI 10000 */
+sai_attribute_t term_attrs[4];
+term_attrs[0].id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID;
+term_attrs[0].value.oid = vrf_id;
+term_attrs[1].id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE;
+term_attrs[1].value.s32 = SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP;
+term_attrs[2].id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP;
+term_attrs[2].value.ipaddr.addr.ip4 = vtep_ip;
+term_attrs[3].id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE;
+term_attrs[3].value.s32 = SAI_TUNNEL_TYPE_VXLAN;
+
+sai_object_id_t term_id;
+tunnel_api->create_tunnel_term_table_entry(&term_id, switch_id, 4, term_attrs);
+```
+
+<Note>
+  VXLAN tunnels use port 4789 by default. Some implementations support configuring the UDP destination port via switch attributes. Consult your platform documentation.
+</Note>

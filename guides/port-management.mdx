@@ -1,0 +1,193 @@
+---
+title: "Port Management"
+description: "Query and configure SAI ports: speed, admin state, FEC mode, MTU, counters, and logical port creation."
+---
+
+SAI ports are represented as `sai_object_id_t` handles of type `SAI_OBJECT_TYPE_PORT`. When you create a switch object, the adapter automatically creates port objects for every physical port detected on the hardware. You do not call `create_port` to bring existing ports into existence—you query the switch for the list it has already created.
+
+## Obtain the port API
+
+```c
+sai_port_api_t *port_api = NULL;
+
+sai_status_t status = sai_api_query(SAI_API_PORT, (void **)&port_api);
+if (status != SAI_STATUS_SUCCESS || port_api == NULL) {
+    fprintf(stderr, "sai_api_query(SAI_API_PORT) failed: %d\n", status);
+    return -1;
+}
+```
+
+## Enumerate ports from the switch
+
+Read `SAI_SWITCH_ATTR_PORT_LIST` after switch creation to get the handles for every active port.
+
+```c
+/* Assumes switch_api and switch_id are already initialized */
+sai_attribute_t count_attr = { .id = SAI_SWITCH_ATTR_NUMBER_OF_ACTIVE_PORTS };
+switch_api->get_switch_attribute(switch_id, 1, &count_attr);
+uint32_t n = count_attr.value.u32;
+
+sai_object_id_t *ports = calloc(n, sizeof(sai_object_id_t));
+sai_attribute_t list_attr = {
+    .id            = SAI_SWITCH_ATTR_PORT_LIST,
+    .value.objlist = { .count = n, .list = ports },
+};
+switch_api->get_switch_attribute(switch_id, 1, &list_attr);
+```
+
+## Get and set port attributes
+
+Use `port_api->get_port_attribute` and `port_api->set_port_attribute` to read and configure ports. Multiple attributes can be retrieved in a single call by passing an array.
+
+### Speed
+
+`SAI_PORT_ATTR_SPEED` is the configured speed in Mbps. It is mandatory on `create_port` and can also be updated after creation.
+
+```c
+/* Read the configured speed */
+sai_attribute_t speed_attr = { .id = SAI_PORT_ATTR_SPEED };
+port_api->get_port_attribute(ports[0], 1, &speed_attr);
+printf("port speed: %u Mbps\n", speed_attr.value.u32);
+
+/* Set speed to 100 Gbps */
+sai_attribute_t set_speed = {
+    .id          = SAI_PORT_ATTR_SPEED,
+    .value.u32   = 100000,
+};
+port_api->set_port_attribute(ports[0], &set_speed);
+```
+
+### Admin state
+
+`SAI_PORT_ATTR_ADMIN_STATE` enables or disables packet forwarding on a port. It defaults to `false` (disabled) on newly created ports.
+
+```c
+/* Enable the port */
+sai_attribute_t admin_attr = {
+    .id             = SAI_PORT_ATTR_ADMIN_STATE,
+    .value.booldata = true,
+};
+port_api->set_port_attribute(ports[0], &admin_attr);
+```
+
+### FEC mode
+
+`SAI_PORT_ATTR_FEC_MODE` accepts a `sai_port_fec_mode_t` value. Use `SAI_PORT_FEC_MODE_RS` for Reed-Solomon FEC (25 G, 50 G, 100 G) and `SAI_PORT_FEC_MODE_FC` for Fire Code FEC (10 G, 25 G).
+
+```c
+sai_attribute_t fec_attr = {
+    .id      = SAI_PORT_ATTR_FEC_MODE,
+    .value.s32 = SAI_PORT_FEC_MODE_RS,
+};
+port_api->set_port_attribute(ports[0], &fec_attr);
+```
+
+For finer control over RS-FEC variants, set `SAI_PORT_ATTR_USE_EXTENDED_FEC` to `true` and use `SAI_PORT_ATTR_FEC_MODE_EXTENDED` with a `sai_port_fec_mode_extended_t` value such as `SAI_PORT_FEC_MODE_EXTENDED_RS544`.
+
+### MTU
+
+`SAI_PORT_ATTR_MTU` is the maximum transmission unit in bytes, defaulting to 1514.
+
+```c
+sai_attribute_t mtu_attr = {
+    .id      = SAI_PORT_ATTR_MTU,
+    .value.u32 = 9216,   /* jumbo frames */
+};
+port_api->set_port_attribute(ports[0], &mtu_attr);
+```
+
+## Read port statistics
+
+`port_api->get_port_stats` retrieves one or more counters in a single call. Counter IDs are from the `sai_port_stat_t` enum.
+
+```c
+sai_stat_id_t counter_ids[] = {
+    SAI_PORT_STAT_IF_IN_OCTETS,
+    SAI_PORT_STAT_IF_IN_UCAST_PKTS,
+    SAI_PORT_STAT_IF_OUT_OCTETS,
+    SAI_PORT_STAT_IF_OUT_UCAST_PKTS,
+    SAI_PORT_STAT_IF_IN_ERRORS,
+    SAI_PORT_STAT_IF_OUT_ERRORS,
+};
+uint32_t n_counters = sizeof(counter_ids) / sizeof(counter_ids[0]);
+uint64_t values[6];
+
+status = port_api->get_port_stats(
+    ports[0],
+    n_counters,
+    counter_ids,
+    values);
+
+if (status == SAI_STATUS_SUCCESS) {
+    printf("RX bytes:       %llu\n", (unsigned long long)values[0]);
+    printf("RX unicast pkts:%llu\n", (unsigned long long)values[1]);
+    printf("TX bytes:       %llu\n", (unsigned long long)values[2]);
+    printf("TX unicast pkts:%llu\n", (unsigned long long)values[3]);
+    printf("RX errors:      %llu\n", (unsigned long long)values[4]);
+    printf("TX errors:      %llu\n", (unsigned long long)values[5]);
+}
+```
+
+Use `port_api->clear_port_stats` to reset specific counters, or `port_api->clear_port_all_stats` to reset all counters for a port.
+
+## Create a logical port
+
+When you need to break out a physical port into multiple logical ports (for example, one 400 G port as four 100 G ports), call `port_api->create_port`. The `SAI_PORT_ATTR_HW_LANE_LIST` and `SAI_PORT_ATTR_SPEED` attributes are mandatory.
+
+```c
+/* Create a 100G logical port on lanes 4 and 5 */
+uint32_t lanes[] = { 4, 5 };
+
+sai_attribute_t port_attrs[] = {
+    {
+        .id            = SAI_PORT_ATTR_HW_LANE_LIST,
+        .value.u32list = { .count = 2, .list = lanes },
+    },
+    {
+        .id          = SAI_PORT_ATTR_SPEED,
+        .value.u32   = 100000,
+    },
+    {
+        .id             = SAI_PORT_ATTR_ADMIN_STATE,
+        .value.booldata = true,
+    },
+    {
+        .id        = SAI_PORT_ATTR_FEC_MODE,
+        .value.s32 = SAI_PORT_FEC_MODE_RS,
+    },
+};
+
+sai_object_id_t new_port_id = SAI_NULL_OBJECT_ID;
+status = port_api->create_port(
+    &new_port_id,
+    switch_id,
+    sizeof(port_attrs) / sizeof(port_attrs[0]),
+    port_attrs);
+```
+
+<Tip>
+Use `sai_object_type_get_availability(switch_id, SAI_OBJECT_TYPE_PORT, 0, NULL, &count)` to check how many additional logical ports the hardware can accommodate before calling `create_port`. This avoids allocation failures at runtime.
+</Tip>
+
+## Key port attribute reference
+
+| Attribute | Type | Access | Description |
+|---|---|---|---|
+| `SAI_PORT_ATTR_TYPE` | `sai_port_type_t` | Read-only | Logical, CPU, Fabric, or Recycle |
+| `SAI_PORT_ATTR_OPER_STATUS` | `sai_port_oper_status_t` | Read-only | Up, Down, Testing, Not Present |
+| `SAI_PORT_ATTR_OPER_SPEED` | `sai_uint32_t` | Read-only | Negotiated speed in Mbps; 0 if down |
+| `SAI_PORT_ATTR_HW_LANE_LIST` | `sai_u32_list_t` | Create-only | Physical SerDes lane numbers |
+| `SAI_PORT_ATTR_SPEED` | `sai_uint32_t` | Create and set | Configured speed in Mbps |
+| `SAI_PORT_ATTR_ADMIN_STATE` | `bool` | Create and set | Enable/disable forwarding |
+| `SAI_PORT_ATTR_FEC_MODE` | `sai_port_fec_mode_t` | Create and set | None, RS, or FC |
+| `SAI_PORT_ATTR_MTU` | `sai_uint32_t` | Create and set | Maximum frame size in bytes |
+| `SAI_PORT_ATTR_AUTO_NEG_MODE` | `bool` | Create and set | Enable auto-negotiation |
+
+<CardGroup cols={2}>
+  <Card title="Switch Initialization" icon="power-off" href="/guides/switch-initialization">
+    Load the adapter, create the switch, and query the initial port list.
+  </Card>
+  <Card title="Quality of Service" icon="gauge-high" href="/guides/qos">
+    Bind QoS maps to ports and configure queues and schedulers.
+  </Card>
+</CardGroup>

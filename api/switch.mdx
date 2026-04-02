@@ -1,0 +1,345 @@
+---
+title: "Switch API"
+description: "Create and manage switch instances, configure global properties, and handle event notifications via sai_switch_api_t."
+---
+
+The Switch API is the entry point for all switch-level operations. Retrieve it with `sai_api_query(SAI_API_SWITCH, ...)` after calling `sai_api_initialize()`.
+
+<Note>
+A switch object must be created before any other SAI objects (ports, VLANs, routes, etc.) can be created.
+</Note>
+
+---
+
+## Method table (`sai_switch_api_t`)
+
+```c
+typedef struct _sai_switch_api_t {
+    sai_create_switch_fn                   create_switch;
+    sai_remove_switch_fn                   remove_switch;
+    sai_set_switch_attribute_fn            set_switch_attribute;
+    sai_get_switch_attribute_fn            get_switch_attribute;
+    sai_get_switch_stats_fn                get_switch_stats;
+    sai_get_switch_stats_ext_fn            get_switch_stats_ext;
+    sai_clear_switch_stats_fn              clear_switch_stats;
+    sai_switch_mdio_read_fn                switch_mdio_read;
+    sai_switch_mdio_write_fn               switch_mdio_write;
+    sai_create_switch_tunnel_fn            create_switch_tunnel;
+    sai_remove_switch_tunnel_fn            remove_switch_tunnel;
+    sai_set_switch_tunnel_attribute_fn     set_switch_tunnel_attribute;
+    sai_get_switch_tunnel_attribute_fn     get_switch_tunnel_attribute;
+    sai_switch_mdio_cl22_read_fn           switch_mdio_cl22_read;
+    sai_switch_mdio_cl22_write_fn          switch_mdio_cl22_write;
+} sai_switch_api_t;
+```
+
+---
+
+## `create_switch`
+
+Creates and initializes a switch instance.
+
+```c
+sai_status_t (*sai_create_switch_fn)(
+        _Out_ sai_object_id_t *switch_id,
+        _In_  uint32_t attr_count,
+        _In_  const sai_attribute_t *attr_list);
+```
+
+<ParamField path="switch_id" type="sai_object_id_t *">
+  Output. Receives the newly created switch object ID.
+</ParamField>
+
+<ParamField path="attr_count" type="uint32_t">
+  Number of attributes in `attr_list`.
+</ParamField>
+
+<ParamField path="attr_list" type="const sai_attribute_t *">
+  Array of attributes. `SAI_SWITCH_ATTR_INIT_SWITCH` is mandatory.
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+## `remove_switch`
+
+Removes a switch instance and releases all associated resources.
+
+```c
+sai_status_t (*sai_remove_switch_fn)(
+        _In_ sai_object_id_t switch_id);
+```
+
+<ParamField path="switch_id" type="sai_object_id_t">
+  The switch object ID returned by `create_switch`.
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+## `set_switch_attribute`
+
+Sets a single attribute on an existing switch object.
+
+```c
+sai_status_t (*sai_set_switch_attribute_fn)(
+        _In_ sai_object_id_t switch_id,
+        _In_ const sai_attribute_t *attr);
+```
+
+<ParamField path="switch_id" type="sai_object_id_t">
+  The switch object ID.
+</ParamField>
+
+<ParamField path="attr" type="const sai_attribute_t *">
+  Pointer to the attribute to set. Only attributes flagged `CREATE_AND_SET` can be modified after creation.
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+## `get_switch_attribute`
+
+Retrieves one or more attributes from an existing switch object.
+
+```c
+sai_status_t (*sai_get_switch_attribute_fn)(
+        _In_    sai_object_id_t switch_id,
+        _In_    uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list);
+```
+
+<ParamField path="switch_id" type="sai_object_id_t">
+  The switch object ID.
+</ParamField>
+
+<ParamField path="attr_count" type="uint32_t">
+  Number of attributes in `attr_list`.
+</ParamField>
+
+<ParamField path="attr_list" type="sai_attribute_t *">
+  Caller-provided array. Each element's `.id` field identifies which attribute to read; the `.value` field is populated on return.
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+## Key switch attributes
+
+### Initialization attributes
+
+These attributes control how the switch is initialized. Most are `CREATE_ONLY` and cannot be changed after `create_switch`.
+
+<ParamField path="SAI_SWITCH_ATTR_INIT_SWITCH" type="bool">
+  **Mandatory on create. Create-only.**
+
+  Controls whether the adapter initializes the switch SDK (`true`) or connects to an already-running SDK instance (`false`). After `create_switch` returns with `false`, capability attributes are immediately readable via `get_switch_attribute`.
+</ParamField>
+
+<ParamField path="SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO" type="sai_s8_list_t">
+  **Create-only. Default: empty.**
+
+  Vendor-specific device location string (e.g., PCI address, I2C address, MDIO bus SysFS path). Format is `{interface_name}/{phy_id}` for MDIO SysFS. If NULL, the first NPU attached to the CPU is used. Optional for single-NPU configurations.
+</ParamField>
+
+<ParamField path="SAI_SWITCH_ATTR_SWITCH_PROFILE_ID" type="sai_uint32_t">
+  **Create-only. Default: 0.**
+
+  Profile ID passed to the `profile_get_value` and `profile_get_next_value` callbacks in the service method table. Use this to select a named configuration profile.
+</ParamField>
+
+### Read-only operational attributes
+
+<ParamField path="SAI_SWITCH_ATTR_PORT_LIST" type="sai_object_list_t">
+  **Read-only.**
+
+  List of port object IDs that exist on this switch. Populate your attribute with a sufficiently large buffer and retry on `SAI_STATUS_BUFFER_OVERFLOW`.
+</ParamField>
+
+<ParamField path="SAI_SWITCH_ATTR_CPU_PORT" type="sai_object_id_t">
+  **Read-only.**
+
+  Object ID of the CPU port. Use this port to send and receive host-directed packets via the host interface API.
+</ParamField>
+
+<ParamField path="SAI_SWITCH_ATTR_DEFAULT_VLAN_ID" type="sai_object_id_t">
+  **Read-only.**
+
+  Object ID of the default VLAN (VLAN 1) created at switch initialization.
+</ParamField>
+
+<ParamField path="SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID" type="sai_object_id_t">
+  **Read-only.**
+
+  Object ID of the default virtual router created at switch initialization. Attempting to delete it returns `SAI_STATUS_OBJECT_IN_USE`.
+</ParamField>
+
+### Notification callback attributes
+
+Notification callbacks are registered as `CREATE_AND_SET` attributes using `sai_pointer_t`. Pass a `NULL` pointer to disable a callback.
+
+<ParamField path="SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY" type="sai_pointer_t (sai_port_state_change_notification_fn)">
+  **Create and set. Default: NULL.**
+
+  Registered callback invoked by the adapter when a port's operational status changes. If the driver does not support this attribute, poll `SAI_PORT_ATTR_OPER_STATUS` instead.
+
+  ```c
+  typedef void (*sai_port_state_change_notification_fn)(
+          _In_ uint32_t count,
+          _In_ const sai_port_oper_status_notification_t *data);
+  ```
+</ParamField>
+
+<ParamField path="SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY" type="sai_pointer_t (sai_fdb_event_notification_fn)">
+  **Create and set. Default: NULL.**
+
+  Registered callback invoked when FDB (MAC address table) events occur, such as address learning or aging.
+
+  ```c
+  typedef void (*sai_fdb_event_notification_fn)(
+          _In_ uint32_t count,
+          _In_ const sai_fdb_event_notification_data_t *data);
+  ```
+</ParamField>
+
+<ParamField path="SAI_SWITCH_ATTR_SWITCH_SHUTDOWN_REQUEST_NOTIFY" type="sai_pointer_t (sai_switch_shutdown_request_notification_fn)">
+  **Create and set. Default: NULL.**
+
+  Registered callback invoked when the adapter requests a controlled switch shutdown (e.g., before a warm reboot).
+
+  ```c
+  typedef void (*sai_switch_shutdown_request_notification_fn)(
+          _In_ sai_object_id_t switch_id);
+  ```
+</ParamField>
+
+---
+
+## Notification callbacks
+
+### Port state change
+
+```c
+typedef void (*sai_port_state_change_notification_fn)(
+        _In_ uint32_t count,
+        _In_ const sai_port_oper_status_notification_t *data);
+```
+
+Each `sai_port_oper_status_notification_t` element contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `port_id` | `sai_object_id_t` | Port, bridge port, or LAG that changed state. |
+| `port_state` | `sai_port_oper_status_t` | New operational status: `UNKNOWN`, `UP`, `DOWN`, `TESTING`, `NOT_PRESENT`. |
+| `port_error_status` | `sai_port_error_status_t` | Bitmask of active error/fault conditions. |
+
+### FDB events
+
+```c
+typedef void (*sai_fdb_event_notification_fn)(
+        _In_ uint32_t count,
+        _In_ const sai_fdb_event_notification_data_t *data);
+```
+
+### Switch shutdown request
+
+```c
+typedef void (*sai_switch_shutdown_request_notification_fn)(
+        _In_ sai_object_id_t switch_id);
+```
+
+The adapter calls this when it requires the host adapter to shut down the switch (e.g., during a planned warm reboot sequence).
+
+<Warning>
+Do not call any SAI functions from within a notification callback. Callbacks are invoked from an internal driver thread. Offload work to a separate processing thread.
+</Warning>
+
+---
+
+## Complete example
+
+```c
+#include <sai.h>
+#include <stdio.h>
+#include <string.h>
+
+static sai_switch_api_t *switch_api = NULL;
+
+/* Port state change callback */
+static void on_port_state_change(uint32_t count,
+                                 const sai_port_oper_status_notification_t *data) {
+    for (uint32_t i = 0; i < count; i++) {
+        printf("Port 0x%lx: status=%d error=0x%x\n",
+               (unsigned long)data[i].port_id,
+               (int)data[i].port_state,
+               (unsigned)data[i].port_error_status);
+    }
+}
+
+/* FDB event callback */
+static void on_fdb_event(uint32_t count,
+                         const sai_fdb_event_notification_data_t *data) {
+    (void)count; (void)data;
+    /* process MAC address events */
+}
+
+int create_switch(void) {
+    sai_object_id_t switch_id = SAI_NULL_OBJECT_ID;
+
+    sai_attribute_t attrs[5];
+    uint32_t n = 0;
+
+    /* Mandatory: initialize the SDK */
+    attrs[n].id = SAI_SWITCH_ATTR_INIT_SWITCH;
+    attrs[n].value.booldata = true;
+    n++;
+
+    /* Optional: hardware identifier string */
+    const char hw_info[] = "0000:01:00.0";  /* example PCI address */
+    attrs[n].id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
+    attrs[n].value.s8list.list = (int8_t *)hw_info;
+    attrs[n].value.s8list.count = (uint32_t)strlen(hw_info);
+    n++;
+
+    /* Optional: profile ID for K/V pair retrieval */
+    attrs[n].id = SAI_SWITCH_ATTR_SWITCH_PROFILE_ID;
+    attrs[n].value.u32 = 0;
+    n++;
+
+    /* Register port state change notification */
+    attrs[n].id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
+    attrs[n].value.ptr = (void *)on_port_state_change;
+    n++;
+
+    /* Register FDB event notification */
+    attrs[n].id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
+    attrs[n].value.ptr = (void *)on_fdb_event;
+    n++;
+
+    sai_status_t status = switch_api->create_switch(&switch_id, n, attrs);
+    if (status != SAI_STATUS_SUCCESS) {
+        fprintf(stderr, "create_switch failed: %d\n", status);
+        return -1;
+    }
+
+    printf("Switch created: 0x%lx\n", (unsigned long)switch_id);
+
+    /* Read back the port list */
+    sai_object_id_t port_ids[256];
+    sai_attribute_t port_list_attr;
+    port_list_attr.id = SAI_SWITCH_ATTR_PORT_LIST;
+    port_list_attr.value.objlist.list  = port_ids;
+    port_list_attr.value.objlist.count = 256;
+
+    status = switch_api->get_switch_attribute(switch_id, 1, &port_list_attr);
+    if (status == SAI_STATUS_SUCCESS) {
+        printf("Switch has %u ports\n", port_list_attr.value.objlist.count);
+    }
+
+    return 0;
+}
+```

@@ -1,0 +1,163 @@
+---
+title: "Counter API"
+description: "Generic hardware counters that can be attached to ACL entries, routes, and other SAI objects to measure packet and byte hits."
+---
+
+The Counter API (`sai_counter_api_t`) provides a pool of generic counters that you can attach to dynamic SAI objects such as ACL entries, route entries, and next-hop groups. Counters give you per-object packet and byte visibility without requiring dedicated hardware counters for each object type.
+
+## Counter object
+
+A counter object (`SAI_OBJECT_TYPE_COUNTER`) is a lightweight hardware counter that accumulates packet hits and byte counts. You create a counter once and then attach it to one or more SAI objects via a `SAI_*_ATTR_COUNTER_ID` attribute on the target object.
+
+**Key behaviors:**
+
+- A counter can be attached to and detached from objects multiple times during its lifetime.
+- Attaching or detaching a counter does not clear its accumulated statistics.
+- A single counter can be attached to multiple objects simultaneously; hits from all attached objects accumulate into the same counter.
+
+### Counter types
+
+<ParamField path="SAI_COUNTER_TYPE_REGULAR" type="sai_counter_type_t">
+  A standard counter that accumulates all packet and byte hits on attached objects. This is the default type.
+</ParamField>
+
+<ParamField path="SAI_COUNTER_TYPE_SELECTIVE" type="sai_counter_type_t">
+  A counter mapped to a specific list of stat IDs from a given object type. Requires `SAI_COUNTER_ATTR_OBJECT_TYPE` and `SAI_COUNTER_ATTR_STAT_ID_LIST` to be set at creation time.
+</ParamField>
+
+## Attributes
+
+<ParamField path="SAI_COUNTER_ATTR_TYPE" type="sai_counter_type_t">
+  Counter type. Set at creation time only. Defaults to `SAI_COUNTER_TYPE_REGULAR`.
+</ParamField>
+
+<ParamField path="SAI_COUNTER_ATTR_LABEL" type="char">
+  A human-readable label to uniquely identify the counter. Can be set after creation. Defaults to an empty string.
+</ParamField>
+
+<ParamField path="SAI_COUNTER_ATTR_ENABLE_PACKET_COUNT" type="bool">
+  Enable packet counting. Set at creation time only. Defaults to `true`.
+</ParamField>
+
+<ParamField path="SAI_COUNTER_ATTR_ENABLE_BYTE_COUNT" type="bool">
+  Enable byte counting. Set at creation time only. Defaults to `true`.
+</ParamField>
+
+<ParamField path="SAI_COUNTER_ATTR_OBJECT_TYPE" type="sai_object_type_t">
+  The object type whose stat IDs are mapped to this counter. Mandatory at creation time when `SAI_COUNTER_ATTR_TYPE == SAI_COUNTER_TYPE_SELECTIVE`.
+</ParamField>
+
+<ParamField path="SAI_COUNTER_ATTR_STAT_ID_LIST" type="sai_s32_list_t">
+  List of stat enum values mapped to this counter. Valid only for `SAI_COUNTER_TYPE_SELECTIVE`. Can be updated after creation.
+</ParamField>
+
+## API functions
+
+`sai_counter_api_t` contains the following functions:
+
+| Function | Description |
+|---|---|
+| `create_counter` | Allocates a new counter object. |
+| `remove_counter` | Frees a counter object. |
+| `set_counter_attribute` | Updates a settable attribute (e.g., `SAI_COUNTER_ATTR_LABEL`). |
+| `get_counter_attribute` | Reads one or more attributes. |
+| `get_counter_stats` | Reads accumulated statistics (deprecated; use `get_counter_stats_ext`). |
+| `get_counter_stats_ext` | Reads statistics with a configurable read mode (`SAI_STATS_MODE_READ` or `SAI_STATS_MODE_READ_AND_CLEAR`). |
+| `clear_counter_stats` | Clears selected statistics without reading them. |
+
+## Statistics
+
+<ParamField path="SAI_COUNTER_STAT_PACKETS" type="uint64_t">
+  Total packet hits on all objects this counter is attached to.
+</ParamField>
+
+<ParamField path="SAI_COUNTER_STAT_BYTES" type="uint64_t">
+  Total byte hits on all objects this counter is attached to.
+</ParamField>
+
+## Attaching counters to SAI objects
+
+Many SAI object types expose a `SAI_*_ATTR_COUNTER_ID` attribute that accepts the object ID of a counter. Setting it to `SAI_NULL_OBJECT_ID` detaches the counter. Examples include:
+
+- `SAI_ROUTE_ENTRY_ATTR_COUNTER_ID` — attach to a route entry
+- `SAI_ACL_ENTRY_ATTR_ACTION_COUNTER` — attach to an ACL entry action
+
+## Usage example
+
+The following example creates a regular counter, attaches it to a route entry, reads the statistics, and then cleans up.
+
+```c
+/* 1. Create a counter */
+sai_attribute_t counter_attr;
+counter_attr.id    = SAI_COUNTER_ATTR_TYPE;
+counter_attr.value.s32 = SAI_COUNTER_TYPE_REGULAR;
+
+sai_object_id_t counter_id;
+sai_status_t rc = sai_counter_api->create_counter(
+    &counter_id, g_switch_id, 1, &counter_attr);
+
+/* 2. Attach the counter to a route entry */
+sai_attribute_t route_attr;
+route_attr.id        = SAI_ROUTE_ENTRY_ATTR_COUNTER_ID;
+route_attr.value.oid = counter_id;
+rc = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+
+/* 3. Read packet and byte stats */
+sai_stat_id_t stat_ids[] = {
+    SAI_COUNTER_STAT_PACKETS,
+    SAI_COUNTER_STAT_BYTES
+};
+uint64_t stats[2];
+rc = sai_counter_api->get_counter_stats_ext(
+    counter_id, 2, stat_ids, SAI_STATS_MODE_READ, stats);
+
+printf("Route packets=%lu  bytes=%lu\n", stats[0], stats[1]);
+
+/* 4. Detach and remove the counter */
+route_attr.value.oid = SAI_NULL_OBJECT_ID;
+sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+sai_counter_api->remove_counter(counter_id);
+```
+
+### Binding a counter to an ACL entry
+
+```c
+/* Create counter */
+sai_attribute_t cnt_attr;
+cnt_attr.id        = SAI_COUNTER_ATTR_TYPE;
+cnt_attr.value.s32 = SAI_COUNTER_TYPE_REGULAR;
+
+sai_object_id_t acl_counter_id;
+sai_counter_api->create_counter(&acl_counter_id, g_switch_id, 1, &cnt_attr);
+
+/* Attach to an existing ACL entry */
+sai_attribute_t acl_attr;
+acl_attr.id        = SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
+acl_attr.value.aclaction.enable   = true;
+acl_attr.value.aclaction.parameter.oid = acl_counter_id;
+sai_acl_api->set_acl_entry_attribute(acl_entry_id, &acl_attr);
+```
+
+## Capacity monitoring (CRM)
+
+Use `sai_object_type_get_availability()` to query the number of counter objects still available in hardware before allocating more. This is part of the Critical Resource Monitor (CRM) workflow.
+
+```c
+uint64_t available_counters;
+sai_status_t rc = sai_object_type_get_availability(
+    switch_id,
+    SAI_OBJECT_TYPE_COUNTER,
+    0,       /* no distinguishing attributes needed */
+    NULL,
+    &available_counters);
+
+if (rc == SAI_STATUS_SUCCESS) {
+    printf("Available counters: %lu\n", available_counters);
+}
+```
+
+`sai_object_type_get_availability()` returns `SAI_STATUS_NOT_SUPPORTED` if the ASIC does not support resource accounting for the given object type. The CRM workflow allows the Network OS to monitor resource utilization and avoid allocation failures at runtime.
+
+<Note>
+Counter availability is a shared hardware resource. After allocating a counter, re-query availability to confirm it decreased. If availability for unrelated object types also decreases, the hardware pools are shared.
+</Note>

@@ -1,0 +1,202 @@
+---
+title: "Switch Initialization"
+description: "Step-by-step guide to initializing a SAI switch, from loading the adapter library to querying the port list."
+---
+
+The Switch Abstraction Interface (SAI) follows a well-defined initialization sequence. You load the adapter shared library, register a service method table, initialize the API, obtain a switch API handle, create the switch object, then enumerate ports. On shutdown you release resources in reverse order.
+
+<Warning>
+Switch creation (`create_switch`) is a heavyweight operation that programs the NPU, loads firmware, and allocates hardware resources. It can take several seconds. Only create a switch once per process lifetime and do not call it in performance-sensitive paths.
+</Warning>
+
+<Steps>
+  <Step title="Load the adapter shared library">
+    SAI adapters are distributed as shared libraries. Use `dlopen` to load the vendor-supplied adapter at runtime, then resolve the well-known entry points.
+
+    ```c
+    #include <dlfcn.h>
+    #include "sai.h"
+
+    void *lib = dlopen("libsai.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!lib) {
+        fprintf(stderr, "dlopen failed: %s\n", dlerror());
+        return -1;
+    }
+    ```
+
+    All subsequent SAI symbols are resolved through the method tables returned by `sai_api_query()`, so no additional `dlsym` calls are required.
+  </Step>
+
+  <Step title="Implement the service method table">
+    The adapter host must supply a `sai_service_method_table_t` with two callbacks. These give the adapter a way to read key-value configuration at runtime.
+
+    ```c
+    #include "sai.h"
+
+    static const char *profile_get_value(
+            sai_switch_profile_id_t profile_id,
+            const char *variable)
+    {
+        /* Return adapter-specific config values by name.
+         * Return NULL if the variable is not found. */
+        if (strcmp(variable, "SAI_KEY_WARM_BOOT_WRITE_FILE") == 0)
+            return "/tmp/sai_warmboot.bin";
+        return NULL;
+    }
+
+    static int profile_get_next_value(
+            sai_switch_profile_id_t profile_id,
+            const char **variable,
+            const char **value)
+    {
+        /* Return 0 while there are more key-value pairs to enumerate,
+         * -1 when the list is exhausted. */
+        return -1;
+    }
+
+    static const sai_service_method_table_t svc_tbl = {
+        .profile_get_value      = profile_get_value,
+        .profile_get_next_value = profile_get_next_value,
+    };
+    ```
+  </Step>
+
+  <Step title="Call sai_api_initialize()">
+    `sai_api_initialize` loads the adapter module. This is **not** SDK initialization—it only registers the service method table with the adapter. Pass `0` for `flags`; it is reserved for future use.
+
+    ```c
+    sai_status_t status = sai_api_initialize(0, &svc_tbl);
+    if (status != SAI_STATUS_SUCCESS) {
+        fprintf(stderr, "sai_api_initialize failed: %d\n", status);
+        return -1;
+    }
+    ```
+  </Step>
+
+  <Step title="Query the switch API method table">
+    Retrieve the switch API by passing `SAI_API_SWITCH` to `sai_api_query`. The returned pointer is a `sai_switch_api_t *` containing function pointers for all switch operations.
+
+    ```c
+    sai_switch_api_t *switch_api = NULL;
+
+    status = sai_api_query(SAI_API_SWITCH, (void **)&switch_api);
+    if (status != SAI_STATUS_SUCCESS || switch_api == NULL) {
+        fprintf(stderr, "sai_api_query(SAI_API_SWITCH) failed: %d\n", status);
+        return -1;
+    }
+    ```
+
+    Query additional API tables the same way using the appropriate `SAI_API_*` identifier (for example `SAI_API_PORT`, `SAI_API_ROUTE`).
+  </Step>
+
+  <Step title="Create the switch object">
+    Call `switch_api->create_switch` with the mandatory `SAI_SWITCH_ATTR_INIT_SWITCH` attribute set to `true`. You can also set the source MAC address and register notification callbacks at this point.
+
+    ```c
+    sai_object_id_t switch_id = SAI_NULL_OBJECT_ID;
+
+    sai_mac_t src_mac = { 0x00, 0x11, 0x22, 0x33, 0x44, 0x55 };
+
+    sai_attribute_t sw_attrs[] = {
+        {
+            .id = SAI_SWITCH_ATTR_INIT_SWITCH,
+            .value.booldata = true,
+        },
+        {
+            .id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS,
+            .value.mac = { 0x00, 0x11, 0x22, 0x33, 0x44, 0x55 },
+        },
+    };
+
+    status = switch_api->create_switch(
+        &switch_id,
+        sizeof(sw_attrs) / sizeof(sw_attrs[0]),
+        sw_attrs);
+
+    if (status != SAI_STATUS_SUCCESS) {
+        fprintf(stderr, "create_switch failed: %d\n", status);
+        return -1;
+    }
+    ```
+
+    After `create_switch` returns `SAI_STATUS_SUCCESS`, the switch object is fully initialized and all capability attributes can be read via `switch_api->get_switch_attribute`.
+  </Step>
+
+  <Step title="Query the port list">
+    Physical ports are created automatically when the switch object is created. Read `SAI_SWITCH_ATTR_PORT_LIST` to obtain the `sai_object_id_t` handles for every active port.
+
+    ```c
+    /* First read the active port count */
+    sai_attribute_t attr = { .id = SAI_SWITCH_ATTR_NUMBER_OF_ACTIVE_PORTS };
+    status = switch_api->get_switch_attribute(switch_id, 1, &attr);
+    uint32_t port_count = attr.value.u32;
+
+    /* Allocate and populate the port list */
+    sai_object_id_t *port_list = calloc(port_count, sizeof(sai_object_id_t));
+
+    sai_attribute_t port_list_attr = {
+        .id = SAI_SWITCH_ATTR_PORT_LIST,
+        .value.objlist = {
+            .count = port_count,
+            .list  = port_list,
+        },
+    };
+
+    status = switch_api->get_switch_attribute(switch_id, 1, &port_list_attr);
+    if (status != SAI_STATUS_SUCCESS) {
+        fprintf(stderr, "get port list failed: %d\n", status);
+        free(port_list);
+        return -1;
+    }
+
+    printf("Found %u active ports\n", port_count);
+    ```
+  </Step>
+
+  <Step title="Call sai_api_uninitialize() on shutdown">
+    Before the process exits, remove the switch object and then uninitialize the adapter module. Skipping `remove_switch` before `sai_api_uninitialize` may leave hardware resources in an undefined state.
+
+    ```c
+    /* Remove the switch object */
+    status = switch_api->remove_switch(switch_id);
+    if (status != SAI_STATUS_SUCCESS) {
+        fprintf(stderr, "remove_switch failed: %d\n", status);
+    }
+
+    free(port_list);
+
+    /* Uninitialize the adapter module */
+    status = sai_api_uninitialize();
+    if (status != SAI_STATUS_SUCCESS) {
+        fprintf(stderr, "sai_api_uninitialize failed: %d\n", status);
+    }
+    ```
+
+    After `sai_api_uninitialize()` returns, all method table pointers retrieved via `sai_api_query()` are invalid.
+  </Step>
+</Steps>
+
+## Additional utilities
+
+`sai_log_set` controls the verbosity of a specific API module. The default level is `SAI_LOG_LEVEL_WARN`.
+
+```c
+/* Enable debug logging for the switch API */
+sai_log_set(SAI_API_SWITCH, SAI_LOG_LEVEL_DEBUG);
+```
+
+`sai_object_type_query` returns the `sai_object_type_t` for any object ID, useful for validating handles before passing them to API calls.
+
+```c
+sai_object_type_t ot = sai_object_type_query(switch_id);
+/* Returns SAI_OBJECT_TYPE_SWITCH for a valid switch object */
+```
+
+<CardGroup cols={2}>
+  <Card title="Port Management" icon="ethernet" href="/guides/port-management">
+    Configure port speed, FEC, MTU, and read per-port statistics.
+  </Card>
+  <Card title="L3 Routing" icon="route" href="/guides/routing">
+    Set up virtual routers, router interfaces, neighbors, and routes.
+  </Card>
+</CardGroup>

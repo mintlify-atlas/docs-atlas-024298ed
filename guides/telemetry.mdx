@@ -1,0 +1,224 @@
+---
+title: "Telemetry and Monitoring"
+description: "Collect switch telemetry with port statistics, generic counters, debug drop counters, TAM streaming, and diagnostic dumps."
+---
+
+SAI provides four complementary telemetry mechanisms. Each targets a different granularity and use case.
+
+| Mechanism | Purpose | SAI API |
+|---|---|---|
+| Port/object statistics | Per-port RX/TX counters | `sai_port_api_t::get_port_stats` |
+| Generic counters | User-defined packet/byte counters attached to flows | `SAI_API_COUNTER` |
+| Debug counters | Hardware drop and error reason accounting | `SAI_API_DEBUG_COUNTER` |
+| TAM | Streaming telemetry, in-band telemetry, event reports | `SAI_API_TAM` |
+
+## Port statistics
+
+`port_api->get_port_stats` reads one or more counters atomically. Counter IDs come from `sai_port_stat_t`.
+
+```c
+sai_port_api_t *port_api = NULL;
+sai_api_query(SAI_API_PORT, (void **)&port_api);
+
+sai_stat_id_t counter_ids[] = {
+    SAI_PORT_STAT_IF_IN_OCTETS,
+    SAI_PORT_STAT_IF_IN_UCAST_PKTS,
+    SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS,
+    SAI_PORT_STAT_IF_IN_DISCARDS,
+    SAI_PORT_STAT_IF_IN_ERRORS,
+    SAI_PORT_STAT_IF_OUT_OCTETS,
+    SAI_PORT_STAT_IF_OUT_UCAST_PKTS,
+    SAI_PORT_STAT_IF_OUT_DISCARDS,
+    SAI_PORT_STAT_IF_OUT_ERRORS,
+};
+uint32_t n = sizeof(counter_ids) / sizeof(counter_ids[0]);
+uint64_t values[9];
+
+sai_status_t status = port_api->get_port_stats(port_id, n, counter_ids, values);
+if (status == SAI_STATUS_SUCCESS) {
+    printf("RX bytes:      %llu\n", (unsigned long long)values[0]);
+    printf("RX unicast:    %llu\n", (unsigned long long)values[1]);
+    printf("RX discards:   %llu\n", (unsigned long long)values[3]);
+    printf("RX errors:     %llu\n", (unsigned long long)values[4]);
+    printf("TX bytes:      %llu\n", (unsigned long long)values[5]);
+    printf("TX discards:   %llu\n", (unsigned long long)values[7]);
+    printf("TX errors:     %llu\n", (unsigned long long)values[8]);
+}
+```
+
+FEC-specific counters such as `SAI_PORT_STAT_IF_IN_FEC_CORRECTABLE_FRAMES` and `SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES` are also available for monitoring link quality.
+
+Use `port_api->clear_port_stats` to reset specific counters or `port_api->clear_port_all_stats` to reset all counters on a port.
+
+## Generic counters
+
+Generic counters (`sai_counter_api_t`) are user-defined objects that can be attached to routes, ACL entries, and other SAI objects. They decouple counting from the object type and allow flexible aggregation.
+
+```c
+sai_counter_api_t *counter_api = NULL;
+sai_api_query(SAI_API_COUNTER, (void **)&counter_api);
+
+sai_attribute_t ctr_attrs[] = {
+    {
+        /* Regular counter type (as opposed to selective) */
+        .id        = SAI_COUNTER_ATTR_TYPE,
+        .value.s32 = SAI_COUNTER_TYPE_REGULAR,
+    },
+    {
+        /* Human-readable label for correlation */
+        .id           = SAI_COUNTER_ATTR_LABEL,
+        .value.chardata = "route-10.0.0.0/8",
+    },
+};
+
+sai_object_id_t counter_id = SAI_NULL_OBJECT_ID;
+status = counter_api->create_counter(
+    &counter_id,
+    switch_id,
+    sizeof(ctr_attrs) / sizeof(ctr_attrs[0]),
+    ctr_attrs);
+```
+
+Attach the counter to a route entry via `SAI_ROUTE_ENTRY_ATTR_COUNTER_ID`, or to an ACL entry via `SAI_ACL_ENTRY_ATTR_ACTION_COUNTER`.
+
+Read the counter statistics using the standard stats function:
+
+```c
+sai_stat_id_t stat_ids[] = {
+    SAI_COUNTER_STAT_PACKETS,
+    SAI_COUNTER_STAT_BYTES,
+};
+uint64_t stat_values[2];
+
+status = counter_api->get_counter_stats(
+    counter_id,
+    sizeof(stat_ids) / sizeof(stat_ids[0]),
+    stat_ids,
+    stat_values);
+
+printf("Packets matched: %llu\n", (unsigned long long)stat_values[0]);
+printf("Bytes matched:   %llu\n", (unsigned long long)stat_values[1]);
+```
+
+## Debug counters
+
+Debug counters track specific in-hardware packet drop reasons. They are automatically bound to all ports or to the switch as a whole, and they appear as extended stats on those objects.
+
+### Counter types
+
+`sai_debug_counter_type_t` defines the scope:
+
+| Type | Base object | Description |
+|---|---|---|
+| `SAI_DEBUG_COUNTER_TYPE_PORT_IN_DROP_REASONS` | `SAI_OBJECT_TYPE_PORT` | Ingress drops per port |
+| `SAI_DEBUG_COUNTER_TYPE_PORT_OUT_DROP_REASONS` | `SAI_OBJECT_TYPE_PORT` | Egress drops per port |
+| `SAI_DEBUG_COUNTER_TYPE_SWITCH_IN_DROP_REASONS` | `SAI_OBJECT_TYPE_SWITCH` | Sum of ingress drops across all ports |
+| `SAI_DEBUG_COUNTER_TYPE_SWITCH_OUT_DROP_REASONS` | `SAI_OBJECT_TYPE_SWITCH` | Sum of egress drops across all ports |
+
+### Common drop reasons
+
+Selected values from `sai_in_drop_reason_t`:
+
+- `SAI_IN_DROP_REASON_L2_ANY` — any L2 pipeline drop
+- `SAI_IN_DROP_REASON_SMAC_MULTICAST` — source MAC is a multicast address
+- `SAI_IN_DROP_REASON_SMAC_EQUALS_DMAC` — source and destination MAC are identical
+- `SAI_IN_DROP_REASON_DMAC_RESERVED` — destination is an IEEE-reserved MAC
+- `SAI_IN_DROP_REASON_L3_ANY` — any L3 pipeline drop
+- `SAI_IN_DROP_REASON_TTL_ERROR` — TTL expired
+
+```c
+sai_debug_counter_api_t *dbg_api = NULL;
+sai_api_query(SAI_API_DEBUG_COUNTER, (void **)&dbg_api);
+
+int32_t drop_reasons[] = {
+    SAI_IN_DROP_REASON_L2_ANY,
+    SAI_IN_DROP_REASON_TTL_ERROR,
+};
+
+sai_attribute_t dbg_attrs[] = {
+    {
+        .id        = SAI_DEBUG_COUNTER_ATTR_TYPE,
+        .value.s32 = SAI_DEBUG_COUNTER_TYPE_PORT_IN_DROP_REASONS,
+    },
+    {
+        .id        = SAI_DEBUG_COUNTER_ATTR_BIND_METHOD,
+        .value.s32 = SAI_DEBUG_COUNTER_BIND_METHOD_AUTOMATIC,
+    },
+    {
+        .id            = SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST,
+        .value.s32list = { .count = 2, .list = drop_reasons },
+    },
+};
+
+sai_object_id_t dbg_counter_id = SAI_NULL_OBJECT_ID;
+status = dbg_api->create_debug_counter(
+    &dbg_counter_id,
+    switch_id,
+    sizeof(dbg_attrs) / sizeof(dbg_attrs[0]),
+    dbg_attrs);
+```
+
+Once created with `SAI_DEBUG_COUNTER_BIND_METHOD_AUTOMATIC`, the counter is active on all ports immediately. Read it via `port_api->get_port_stats` using the stat ID assigned to the debug counter.
+
+## TAM (Telemetry and Monitoring)
+
+The TAM framework (`SAI_API_TAM`) provides a composable model for streaming and event-driven telemetry. It is designed for advanced scenarios such as in-band network telemetry (INT), mirror-on-drop, and gRPC telemetry export.
+
+### TAM object hierarchy
+
+A `SAI_OBJECT_TYPE_TAM` root object references:
+
+- `SAI_OBJECT_TYPE_TAM_TELEMETRY` — periodic or on-change telemetry collection
+- `SAI_OBJECT_TYPE_TAM_EVENT` — event-triggered reporting (drops, ECN marks, latency thresholds)
+- `SAI_OBJECT_TYPE_TAM_INT` — in-band telemetry metadata insertion
+
+```c
+sai_tam_api_t *tam_api = NULL;
+sai_api_query(SAI_API_TAM, (void **)&tam_api);
+
+/* Create a TAM root object bound to port bind points */
+int32_t bind_points[] = { SAI_TAM_BIND_POINT_TYPE_PORT };
+
+sai_attribute_t tam_attrs[] = {
+    {
+        .id            = SAI_TAM_ATTR_TAM_BIND_POINT_TYPE_LIST,
+        .value.s32list = { .count = 1, .list = bind_points },
+    },
+    {
+        /* Reference to pre-created telemetry objects */
+        .id            = SAI_TAM_ATTR_TELEMETRY_OBJECTS_LIST,
+        .value.objlist = { .count = 0, .list = NULL },
+    },
+};
+
+sai_object_id_t tam_id = SAI_NULL_OBJECT_ID;
+status = tam_api->create_tam(
+    &tam_id,
+    switch_id,
+    sizeof(tam_attrs) / sizeof(tam_attrs[0]),
+    tam_attrs);
+```
+
+Attach the TAM object to a port via `SAI_PORT_ATTR_TAM_OBJECT_LIST`, or to a queue or ingress priority group using the TAM attribute available on those objects.
+
+## Diagnostic dump
+
+`sai_dbg_generate_dump` captures a point-in-time snapshot of SAI and vendor SDK state to a file. This is useful for offline troubleshooting and is not intended for use in production polling loops.
+
+```c
+sai_status_t status = sai_dbg_generate_dump("/tmp/sai_dump.txt");
+if (status == SAI_STATUS_SUCCESS) {
+    printf("Dump written to /tmp/sai_dump.txt\n");
+}
+```
+
+The content and format of the dump file are vendor-defined and may include internal SDK tables, hardware register snapshots, and FIB contents.
+
+<CardGroup cols={2}>
+  <Card title="Port Management" icon="ethernet" href="/guides/port-management">
+    Read per-port packet and byte statistics.
+  </Card>
+  <Card title="Security" icon="shield-halved" href="/guides/security">
+    Attach ACL counters to entries for per-rule hit counting.
+  </Card>
+</CardGroup>

@@ -1,0 +1,254 @@
+---
+title: "TAM API"
+description: "Telemetry and Monitoring API for streaming network analytics data from the switch ASIC to external collectors."
+---
+
+The TAM API (`sai_tam_api_t`) provides a structured framework for collecting, filtering, and exporting telemetry data from a switch ASIC. TAM covers a range of use cases: per-flow INT (In-band Network Telemetry), queue depth event alerting, counter-based streaming, and port/queue statistics export.
+
+<Note>
+TAM is an advanced feature designed for network analytics platforms. It requires careful orchestration of several dependent objects before telemetry data flows. For simple per-object counter reads, see the [Counter API](/api/counter) or the standard per-object stats functions instead.
+</Note>
+
+## Object hierarchy
+
+TAM is built from a set of composable objects. You create lower-level objects first, then reference them in higher-level objects.
+
+```
+TAM
+├── TAM Event
+│   ├── TAM Event Action  →  TAM Report
+│   ├── TAM Collector     →  TAM Transport
+│   └── TAM Event Threshold
+└── TAM Telemetry
+    ├── TAM Tel Type      →  TAM Report
+    ├── TAM Collector     →  TAM Transport
+    └── TAM Counter Subscription
+```
+
+| Object | Purpose |
+|---|---|
+| **TAM** | Top-level object that groups event and telemetry pipelines and defines bind points. |
+| **TAM Report** | Defines the report format (JSON, IPFIX, Protobuf, etc.) and reporting mode. |
+| **TAM Event** | Specifies the event type and threshold that triggers a report. |
+| **TAM Event Action** | Associates a report object with an event, defining what to emit when an event fires. |
+| **TAM Event Threshold** | Numeric watermark (high/low) or latency/rate value that triggers an event. |
+| **TAM Telemetry** | Periodic streaming pipeline; references telemetry types and collectors. |
+| **TAM Tel Type** | Specifies which data (port stats, queue stats, flows, counters) to collect. |
+| **TAM Collector** | Destination endpoint for telemetry reports (IP address, transport). |
+| **TAM Transport** | Network transport used to deliver reports to a collector (UDP, TCP, GRPC, GRE). |
+| **TAM Math Function** | Optional aggregation function (average, rate, geometric mean) applied to metrics before reporting. |
+| **TAM Counter Subscription** | Links a specific stat on a specific object to a telemetry stream. |
+| **TAM INT** | In-band Network Telemetry configuration (IOAM, IFA, P4 INT, Direct Export, etc.). |
+
+## TAM report types (`sai_tam_report_type_t`)
+
+<ParamField path="SAI_TAM_REPORT_TYPE_SFLOW" type="sai_tam_report_type_t">
+  Reports using the sFlow protocol.
+</ParamField>
+
+<ParamField path="SAI_TAM_REPORT_TYPE_IPFIX" type="sai_tam_report_type_t">
+  Reports using IPFIX (IP Flow Information Export, RFC 7011). Supports enterprise numbers and template intervals.
+</ParamField>
+
+<ParamField path="SAI_TAM_REPORT_TYPE_PROTO" type="sai_tam_report_type_t">
+  Reports using Google Protocol Buffers (GPB/Protobuf).
+</ParamField>
+
+<ParamField path="SAI_TAM_REPORT_TYPE_THRIFT" type="sai_tam_report_type_t">
+  Reports using the Apache Thrift binary protocol.
+</ParamField>
+
+<ParamField path="SAI_TAM_REPORT_TYPE_JSON" type="sai_tam_report_type_t">
+  Reports in JSON format. Useful for integration with logging and observability platforms.
+</ParamField>
+
+<ParamField path="SAI_TAM_REPORT_TYPE_P4_EXTN" type="sai_tam_report_type_t">
+  Reports using P4 extension format.
+</ParamField>
+
+<ParamField path="SAI_TAM_REPORT_TYPE_HISTOGRAM" type="sai_tam_report_type_t">
+  Reports bucket histogram data. Requires `SAI_TAM_REPORT_ATTR_HISTOGRAM_NUMBER_OF_BINS` and `SAI_TAM_REPORT_ATTR_HISTOGRAM_BIN_BOUNDARY` at creation time.
+</ParamField>
+
+<ParamField path="SAI_TAM_REPORT_TYPE_GENETLINK" type="sai_tam_report_type_t">
+  Delivers reports to the Linux kernel via Generic Netlink. Used for local host delivery.
+</ParamField>
+
+<ParamField path="SAI_TAM_REPORT_TYPE_VENDOR_EXTN" type="sai_tam_report_type_t">
+  Vendor-specific report format.
+</ParamField>
+
+## TAM event types (`sai_tam_event_type_t`)
+
+<ParamField path="SAI_TAM_EVENT_TYPE_FLOW_STATE" type="sai_tam_event_type_t">
+  Triggered when a new flow is learned or an existing flow changes state (learned, aged, classified).
+</ParamField>
+
+<ParamField path="SAI_TAM_EVENT_TYPE_FLOW_WATCHLIST" type="sai_tam_event_type_t">
+  Monitors a group of flows (watchlist) instead of individual flows.
+</ParamField>
+
+<ParamField path="SAI_TAM_EVENT_TYPE_FLOW_TCPFLAG" type="sai_tam_event_type_t">
+  Triggered when TCP flags change on a monitored flow.
+</ParamField>
+
+<ParamField path="SAI_TAM_EVENT_TYPE_QUEUE_THRESHOLD" type="sai_tam_event_type_t">
+  Triggered when a queue's depth or latency exceeds a configured threshold.
+</ParamField>
+
+<ParamField path="SAI_TAM_EVENT_TYPE_QUEUE_TAIL_DROP" type="sai_tam_event_type_t">
+  Triggered when packets are dropped because a queue is full (tail drop).
+</ParamField>
+
+<ParamField path="SAI_TAM_EVENT_TYPE_PACKET_DROP" type="sai_tam_event_type_t">
+  Triggered on any packet drop event.
+</ParamField>
+
+<ParamField path="SAI_TAM_EVENT_TYPE_RESOURCE_UTILIZATION" type="sai_tam_event_type_t">
+  Triggered when a switch resource (e.g., route table) exceeds a utilization threshold.
+</ParamField>
+
+<ParamField path="SAI_TAM_EVENT_TYPE_IPG_SHARED" type="sai_tam_event_type_t">
+  Triggered when an ingress priority group's shared occupancy exceeds a threshold.
+</ParamField>
+
+<ParamField path="SAI_TAM_EVENT_TYPE_IPG_XOFF_ROOM" type="sai_tam_event_type_t">
+  Triggered when an ingress priority group's XOFF headroom threshold is crossed.
+</ParamField>
+
+<ParamField path="SAI_TAM_EVENT_TYPE_BSP" type="sai_tam_event_type_t">
+  Triggered when a buffer service pool threshold is exceeded.
+</ParamField>
+
+## Transport types (`sai_tam_transport_type_t`)
+
+| Value | Description |
+|---|---|
+| `SAI_TAM_TRANSPORT_TYPE_NONE` | Local delivery (no network transport). Use with `SAI_TAM_COLLECTOR_ATTR_LOCALHOST = true`. |
+| `SAI_TAM_TRANSPORT_TYPE_TCP` | TCP transport. |
+| `SAI_TAM_TRANSPORT_TYPE_UDP` | UDP transport. Common for IPFIX and sFlow. |
+| `SAI_TAM_TRANSPORT_TYPE_GRPC` | gRPC transport. Common for Protobuf streaming. |
+| `SAI_TAM_TRANSPORT_TYPE_MIRROR` | Delivered via a mirror session. |
+| `SAI_TAM_TRANSPORT_TYPE_GRE` | GRE tunnel. Requires `SAI_TAM_TRANSPORT_ATTR_GRE_PROTOCOL_TYPE`. |
+
+## Math function types (`sai_tam_tel_math_func_type_t`)
+
+| Value | Description |
+|---|---|
+| `SAI_TAM_TEL_MATH_FUNC_TYPE_NONE` | No aggregation; raw values are reported. |
+| `SAI_TAM_TEL_MATH_FUNC_TYPE_GEO_MEAN` | Geometric mean of sampled values. |
+| `SAI_TAM_TEL_MATH_FUNC_TYPE_ALGEBRAIC_MEAN` | Algebraic mean of sampled values. |
+| `SAI_TAM_TEL_MATH_FUNC_TYPE_AVERAGE` | Simple average. |
+| `SAI_TAM_TEL_MATH_FUNC_TYPE_MODE` | Statistical mode (most frequent value). |
+| `SAI_TAM_TEL_MATH_FUNC_TYPE_RATE` | Packet rate computation. |
+
+## API functions
+
+`sai_tam_api_t` exposes CRUD functions for every TAM object type:
+
+| Object | Functions |
+|---|---|
+| TAM | `create_tam`, `remove_tam`, `set_tam_attribute`, `get_tam_attribute` |
+| TAM Math Function | `create_tam_math_func`, `remove_tam_math_func`, `set/get_tam_math_func_attribute` |
+| TAM Report | `create_tam_report`, `remove_tam_report`, `set/get_tam_report_attribute` |
+| TAM Event Threshold | `create_tam_event_threshold`, `remove_tam_event_threshold`, `set/get_tam_event_threshold_attribute` |
+| TAM INT | `create_tam_int`, `remove_tam_int`, `set/get_tam_int_attribute` |
+| TAM Tel Type | `create_tam_tel_type`, `remove_tam_tel_type`, `set/get_tam_tel_type_attribute` |
+| TAM Transport | `create_tam_transport`, `remove_tam_transport`, `set/get_tam_transport_attribute` |
+| TAM Telemetry | `create_tam_telemetry`, `remove_tam_telemetry`, `set/get_tam_telemetry_attribute` |
+| TAM Collector | `create_tam_collector`, `remove_tam_collector`, `set/get_tam_collector_attribute` |
+| TAM Event Action | `create_tam_event_action`, `remove_tam_event_action`, `set/get_tam_event_action_attribute` |
+| TAM Event | `create_tam_event`, `remove_tam_event`, `set/get_tam_event_attribute` |
+| TAM Counter Subscription | `create_tam_counter_subscription`, `remove_tam_counter_subscription`, `set/get_tam_counter_subscription_attribute` |
+
+The `sai_tam_telemetry_get_data()` standalone function retrieves telemetry data from the switch for a given list of objects.
+
+## Usage example
+
+The following example creates a minimal TAM pipeline that emits a JSON report over UDP to a remote collector whenever a queue depth threshold is exceeded.
+
+```c
+sai_object_id_t transport_id, collector_id, report_id;
+sai_object_id_t threshold_id, event_action_id, event_id, tam_id;
+sai_attribute_t attr[4];
+sai_status_t rc;
+
+/* 1. Create transport: UDP to collector port 4739 */
+attr[0].id            = SAI_TAM_TRANSPORT_ATTR_TRANSPORT_TYPE;
+attr[0].value.s32     = SAI_TAM_TRANSPORT_TYPE_UDP;
+attr[1].id            = SAI_TAM_TRANSPORT_ATTR_SRC_PORT;
+attr[1].value.u32     = 0;       /* ephemeral */
+attr[2].id            = SAI_TAM_TRANSPORT_ATTR_DST_PORT;
+attr[2].value.u32     = 4739;    /* IPFIX/sFlow well-known port */
+rc = sai_tam_api->create_tam_transport(
+    &transport_id, g_switch_id, 3, attr);
+
+/* 2. Create collector: send to 192.0.2.100 from 192.0.2.1 */
+sai_ip_address_t src_ip = { .addr_family = SAI_IP_ADDR_FAMILY_IPV4,
+                              .addr.ip4   = htonl(0xC0000201) }; /* 192.0.2.1 */
+sai_ip_address_t dst_ip = { .addr_family = SAI_IP_ADDR_FAMILY_IPV4,
+                              .addr.ip4   = htonl(0xC0000264) }; /* 192.0.2.100 */
+attr[0].id            = SAI_TAM_COLLECTOR_ATTR_SRC_IP;
+attr[0].value.ipaddr  = src_ip;
+attr[1].id            = SAI_TAM_COLLECTOR_ATTR_DST_IP;
+attr[1].value.ipaddr  = dst_ip;
+attr[2].id            = SAI_TAM_COLLECTOR_ATTR_TRANSPORT;
+attr[2].value.oid     = transport_id;
+rc = sai_tam_api->create_tam_collector(
+    &collector_id, g_switch_id, 3, attr);
+
+/* 3. Create report: JSON format, report all events */
+attr[0].id        = SAI_TAM_REPORT_ATTR_TYPE;
+attr[0].value.s32 = SAI_TAM_REPORT_TYPE_JSON;
+attr[1].id        = SAI_TAM_REPORT_ATTR_REPORT_MODE;
+attr[1].value.s32 = SAI_TAM_REPORT_MODE_ALL;
+rc = sai_tam_api->create_tam_report(
+    &report_id, g_switch_id, 2, attr);
+
+/* 4. Create event threshold: trigger at 90% queue occupancy */
+attr[0].id        = SAI_TAM_EVENT_THRESHOLD_ATTR_HIGH_WATERMARK;
+attr[0].value.u32 = 90;
+attr[1].id        = SAI_TAM_EVENT_THRESHOLD_ATTR_UNIT;
+attr[1].value.s32 = SAI_TAM_EVENT_THRESHOLD_UNIT_PERCENT;
+rc = sai_tam_api->create_tam_event_threshold(
+    &threshold_id, g_switch_id, 2, attr);
+
+/* 5. Create event action: emit report on event */
+attr[0].id        = SAI_TAM_EVENT_ACTION_ATTR_REPORT_TYPE;
+attr[0].value.oid = report_id;
+rc = sai_tam_api->create_tam_event_action(
+    &event_action_id, g_switch_id, 1, attr);
+
+/* 6. Create event: queue depth threshold, with action and collector */
+sai_object_id_t action_list[]    = { event_action_id };
+sai_object_id_t collector_list[] = { collector_id };
+
+attr[0].id                     = SAI_TAM_EVENT_ATTR_TYPE;
+attr[0].value.s32              = SAI_TAM_EVENT_TYPE_QUEUE_THRESHOLD;
+attr[1].id                     = SAI_TAM_EVENT_ATTR_ACTION_LIST;
+attr[1].value.objlist.count    = 1;
+attr[1].value.objlist.list     = action_list;
+attr[2].id                     = SAI_TAM_EVENT_ATTR_COLLECTOR_LIST;
+attr[2].value.objlist.count    = 1;
+attr[2].value.objlist.list     = collector_list;
+attr[3].id                     = SAI_TAM_EVENT_ATTR_THRESHOLD;
+attr[3].value.oid              = threshold_id;
+rc = sai_tam_api->create_tam_event(
+    &event_id, g_switch_id, 4, attr);
+
+/* 7. Create top-level TAM object */
+sai_object_id_t event_list[]      = { event_id };
+sai_int32_t bind_point_list[]     = { SAI_TAM_BIND_POINT_TYPE_QUEUE };
+
+attr[0].id                     = SAI_TAM_ATTR_EVENT_OBJECTS_LIST;
+attr[0].value.objlist.count    = 1;
+attr[0].value.objlist.list     = event_list;
+attr[1].id                     = SAI_TAM_ATTR_TAM_BIND_POINT_TYPE_LIST;
+attr[1].value.s32list.count    = 1;
+attr[1].value.s32list.list     = bind_point_list;
+rc = sai_tam_api->create_tam(&tam_id, g_switch_id, 2, attr);
+```
+
+<Warning>
+Delete TAM objects in reverse creation order (TAM first, then events, actions, reports, collectors, and transports). Attempting to remove an object that is still referenced by a higher-level object returns `SAI_STATUS_OBJECT_IN_USE`.
+</Warning>

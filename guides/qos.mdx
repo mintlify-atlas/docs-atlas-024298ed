@@ -1,0 +1,257 @@
+---
+title: "Quality of Service"
+description: "Configure SAI QoS maps, queues, schedulers, buffer profiles, and policers to enforce differentiated packet treatment."
+---
+
+SAI models the QoS data path as a pipeline of objects that classify, schedule, and shape traffic. Each stage is independently configurable and bound to ports or queues.
+
+## QoS data path
+
+<Steps>
+  <Step title="Classify: QoS maps">
+    Ingress QoS maps translate packet header fields (DSCP, 802.1p/Dot1p, or MPLS EXP) to an internal Traffic Class (TC) and a color (green/yellow/red). A second map translates TC to an egress queue index.
+
+    Map types are defined by `sai_qos_map_type_t`:
+
+    - `SAI_QOS_MAP_TYPE_DSCP_TO_TC` — ingress DSCP to traffic class
+    - `SAI_QOS_MAP_TYPE_DSCP_TO_COLOR` — ingress DSCP to packet color
+    - `SAI_QOS_MAP_TYPE_TC_TO_QUEUE` — traffic class to egress queue
+    - `SAI_QOS_MAP_TYPE_DOT1P_TO_TC` — 802.1p priority bits to traffic class
+    - `SAI_QOS_MAP_TYPE_TC_AND_COLOR_TO_DSCP` — remark outgoing DSCP
+  </Step>
+
+  <Step title="Schedule: Queues and Scheduler">
+    Each port has a set of egress queues (`SAI_QUEUE_TYPE_UNICAST`, `SAI_QUEUE_TYPE_MULTICAST`). A Scheduler profile controls how each queue competes for bandwidth using Strict Priority, Weighted Round-Robin (WRR), or Deficit WRR (DWRR) algorithms.
+  </Step>
+
+  <Step title="Buffer: Buffer profiles and priority groups">
+    Buffer profiles define the reserved and shared buffer allocation for queues and ingress priority groups. This controls backpressure (PFC/XON/XOFF) for lossless Ethernet.
+  </Step>
+
+  <Step title="Drop: WRED">
+    Weighted Random Early Detection (WRED) profiles define the drop probability curve (min threshold, max threshold, drop probability) per color. WRED objects bind to queues.
+  </Step>
+
+  <Step title="Police: Policers">
+    Policers enforce token-bucket rate limits. They are defined in single-rate three-color (SR-TCM, RFC 2697), two-rate three-color (TR-TCM, RFC 2698), or storm-control mode. Policers attach to ports or ACL entries.
+  </Step>
+</Steps>
+
+## Create a DSCP-to-TC QoS map
+
+```c
+sai_qos_map_api_t *qos_map_api = NULL;
+sai_api_query(SAI_API_QOS_MAP, (void **)&qos_map_api);
+
+/* Map DSCP 46 (EF/voice) to TC 7, DSCP 0 to TC 0 */
+sai_qos_map_params_t entries[] = {
+    { .key.dscp = 46, .value.tc = 7 },
+    { .key.dscp =  0, .value.tc = 0 },
+};
+
+sai_qos_map_list_t map_list = {
+    .count = sizeof(entries) / sizeof(entries[0]),
+    .list  = entries,
+};
+
+sai_attribute_t map_attrs[] = {
+    {
+        .id        = SAI_QOS_MAP_ATTR_TYPE,
+        .value.s32 = SAI_QOS_MAP_TYPE_DSCP_TO_TC,
+    },
+    {
+        .id           = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST,
+        .value.qosmap = map_list,
+    },
+};
+
+sai_object_id_t dscp_tc_map_id = SAI_NULL_OBJECT_ID;
+sai_status_t status = qos_map_api->create_qos_map(
+    &dscp_tc_map_id,
+    switch_id,
+    sizeof(map_attrs) / sizeof(map_attrs[0]),
+    map_attrs);
+```
+
+## Bind a QoS map to a port
+
+Bind the map using `SAI_PORT_ATTR_QOS_DSCP_TO_TC_AND_COLOR_MAP` (or the appropriate port attribute for the map type) via `port_api->set_port_attribute`.
+
+```c
+sai_attribute_t bind_attr = {
+    .id        = SAI_PORT_ATTR_QOS_DSCP_TO_TC_AND_COLOR_MAP,
+    .value.oid = dscp_tc_map_id,
+};
+
+port_api->set_port_attribute(port_id, &bind_attr);
+```
+
+Similarly, bind a TC-to-queue map using `SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP`.
+
+## Create a scheduler profile
+
+Scheduler profiles are reusable objects that can be applied to multiple queues.
+
+```c
+sai_scheduler_api_t *sched_api = NULL;
+sai_api_query(SAI_API_SCHEDULER, (void **)&sched_api);
+
+sai_attribute_t sched_attrs[] = {
+    {
+        /* Deficit Weighted Round-Robin */
+        .id        = SAI_SCHEDULER_ATTR_SCHEDULING_TYPE,
+        .value.s32 = SAI_SCHEDULING_TYPE_DWRR,
+    },
+    {
+        /* Weight in the range [1, 255] */
+        .id      = SAI_SCHEDULER_ATTR_SCHEDULING_WEIGHT,
+        .value.u8 = 10,
+    },
+    {
+        .id          = SAI_SCHEDULER_ATTR_METER_TYPE,
+        .value.s32   = SAI_METER_TYPE_BYTES,
+    },
+    {
+        /* Min guaranteed bandwidth: 1 Gbps */
+        .id         = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_RATE,
+        .value.u64  = 1000000000ULL,
+    },
+    {
+        /* Max bandwidth: 10 Gbps */
+        .id         = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE,
+        .value.u64  = 10000000000ULL,
+    },
+};
+
+sai_object_id_t sched_id = SAI_NULL_OBJECT_ID;
+status = sched_api->create_scheduler(
+    &sched_id,
+    switch_id,
+    sizeof(sched_attrs) / sizeof(sched_attrs[0]),
+    sched_attrs);
+```
+
+## Bind a scheduler to a queue
+
+Queues are auto-created per port. Retrieve the queue list via `SAI_PORT_ATTR_QOS_QUEUE_LIST`, then bind a scheduler profile to a specific queue using `SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID`.
+
+```c
+sai_queue_api_t *queue_api = NULL;
+sai_api_query(SAI_API_QUEUE, (void **)&queue_api);
+
+/* queue_id is retrieved from SAI_PORT_ATTR_QOS_QUEUE_LIST */
+sai_attribute_t q_sched_attr = {
+    .id        = SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID,
+    .value.oid = sched_id,
+};
+
+queue_api->set_queue_attribute(queue_id, &q_sched_attr);
+```
+
+## Create a buffer profile for a queue
+
+Buffer profiles control the reserved and shared buffer allocation. Use `SAI_BUFFER_PROFILE_ATTR_POOL_ID` to reference a buffer pool object created with `SAI_API_BUFFER`.
+
+```c
+sai_buffer_api_t *buf_api = NULL;
+sai_api_query(SAI_API_BUFFER, (void **)&buf_api);
+
+sai_attribute_t buf_attrs[] = {
+    {
+        .id        = SAI_BUFFER_PROFILE_ATTR_POOL_ID,
+        .value.oid = egress_pool_id,        /* pre-created buffer pool */
+    },
+    {
+        /* Reserved bytes for this queue */
+        .id         = SAI_BUFFER_PROFILE_ATTR_RESERVED_BUFFER_SIZE,
+        .value.u64  = 256 * 1024,           /* 256 KB */
+    },
+    {
+        /* Dynamic threshold mode */
+        .id        = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE,
+        .value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC,
+    },
+    {
+        /* Dynamic threshold value (alpha) */
+        .id      = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH,
+        .value.s8 = 0,                      /* alpha = 2^0 = 1 */
+    },
+};
+
+sai_object_id_t buf_profile_id = SAI_NULL_OBJECT_ID;
+status = buf_api->create_buffer_profile(
+    &buf_profile_id,
+    switch_id,
+    sizeof(buf_attrs) / sizeof(buf_attrs[0]),
+    buf_attrs);
+
+/* Bind the buffer profile to the queue */
+sai_attribute_t q_buf_attr = {
+    .id        = SAI_QUEUE_ATTR_BUFFER_PROFILE_ID,
+    .value.oid = buf_profile_id,
+};
+queue_api->set_queue_attribute(queue_id, &q_buf_attr);
+```
+
+## Create a policer
+
+```c
+sai_policer_api_t *policer_api = NULL;
+sai_api_query(SAI_API_POLICER, (void **)&policer_api);
+
+sai_attribute_t pol_attrs[] = {
+    {
+        /* Single-rate three-color (RFC 2697) */
+        .id        = SAI_POLICER_ATTR_MODE,
+        .value.s32 = SAI_POLICER_MODE_SR_TCM,
+    },
+    {
+        .id        = SAI_POLICER_ATTR_METER_TYPE,
+        .value.s32 = SAI_METER_TYPE_BYTES,
+    },
+    {
+        /* Committed information rate: 100 Mbps */
+        .id         = SAI_POLICER_ATTR_CIR,
+        .value.u64  = 100000000ULL,
+    },
+    {
+        /* Committed burst size: 1 MB */
+        .id         = SAI_POLICER_ATTR_CBS,
+        .value.u64  = 1024 * 1024,
+    },
+    {
+        /* Drop red packets */
+        .id        = SAI_POLICER_ATTR_RED_PACKET_ACTION,
+        .value.s32 = SAI_PACKET_ACTION_DROP,
+    },
+};
+
+sai_object_id_t policer_id = SAI_NULL_OBJECT_ID;
+status = policer_api->create_policer(
+    &policer_id,
+    switch_id,
+    sizeof(pol_attrs) / sizeof(pol_attrs[0]),
+    pol_attrs);
+```
+
+Bind the policer to a port via `SAI_PORT_ATTR_POLICER_ID`, or to an ACL entry via `SAI_ACL_ACTION_TYPE_SET_POLICER`.
+
+## QoS object relationships
+
+| Object | Binds to | SAI API |
+|---|---|---|
+| QoS map | Port attribute | `SAI_API_QOS_MAP` |
+| Queue | Port (auto-created) | `SAI_API_QUEUE` |
+| Scheduler profile | Queue or scheduler group | `SAI_API_SCHEDULER` |
+| Buffer profile | Queue or ingress priority group | `SAI_API_BUFFER` |
+| WRED profile | Queue | `SAI_API_WRED` |
+| Policer | Port or ACL entry | `SAI_API_POLICER` |
+
+<CardGroup cols={2}>
+  <Card title="Port Management" icon="ethernet" href="/guides/port-management">
+    Bind QoS maps to ports and retrieve the queue list.
+  </Card>
+  <Card title="Telemetry and Monitoring" icon="chart-line" href="/guides/telemetry">
+    Read per-queue statistics and set up TAM for streaming telemetry.
+  </Card>
+</CardGroup>

@@ -1,0 +1,306 @@
+---
+title: "Debug Counter API"
+description: "Programmable hardware drop counters that expose normally inaccessible per-reason packet drop statistics on ports and switches."
+---
+
+The Debug Counter API (`sai_debug_counter_api_t`) lets you define custom hardware counters that aggregate packet drops by specific drop reasons. ASICs can distinguish dozens of individual drop causes in their forwarding pipelines, but these are usually not exposed through standard port or switch stat counters. Debug counters give you direct access to this information.
+
+<Tip>
+Use debug counters when troubleshooting silent packet loss. By defining a counter that tracks `SAI_IN_DROP_REASON_UNRESOLVED_NEXT_HOP` or `SAI_IN_DROP_REASON_LPM4_MISS`, for example, you can pinpoint routing misses without packet captures or traffic mirroring.
+</Tip>
+
+## How debug counters work
+
+Each debug counter object defines:
+
+1. A **counter type** (port-level or switch-level, ingress or egress).
+2. A **list of drop reasons** to aggregate.
+
+Once created, the counter is automatically bound to all instances of its base object type (all ports for port counters, the switch for switch counters). The counter index returned by `SAI_DEBUG_COUNTER_ATTR_INDEX` determines which stat slot to read from the base object's stats range.
+
+A packet that matches multiple drop reasons tracked by the same counter is counted **once** per counter instance. Two separate counters tracking overlapping reasons both increment independently for the same dropped packet.
+
+<Note>
+Debug counter stats are only incremented when a packet is actually dropped. If an ASIC is configured to forward traffic that would normally match a drop condition (e.g., `SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION = FORWARD`), the corresponding drop counter does not increment.
+</Note>
+
+## Counter types (`sai_debug_counter_type_t`)
+
+<ParamField path="SAI_DEBUG_COUNTER_TYPE_PORT_IN_DROP_REASONS" type="sai_debug_counter_type_t">
+  Counts ingress drop reasons per port. Base object: `SAI_OBJECT_TYPE_PORT`. Stats are read from `SAI_PORT_STAT_IN_DROP_REASON_RANGE_BASE + index`.
+</ParamField>
+
+<ParamField path="SAI_DEBUG_COUNTER_TYPE_PORT_OUT_DROP_REASONS" type="sai_debug_counter_type_t">
+  Counts egress drop reasons per port. Base object: `SAI_OBJECT_TYPE_PORT`. Stats are read from `SAI_PORT_STAT_OUT_DROP_REASON_RANGE_BASE + index`.
+</ParamField>
+
+<ParamField path="SAI_DEBUG_COUNTER_TYPE_SWITCH_IN_DROP_REASONS" type="sai_debug_counter_type_t">
+  Counts ingress drop reasons aggregated across all ports. Base object: `SAI_OBJECT_TYPE_SWITCH`. Stats are read from `SAI_SWITCH_STAT_IN_DROP_REASON_RANGE_BASE + index`.
+</ParamField>
+
+<ParamField path="SAI_DEBUG_COUNTER_TYPE_SWITCH_OUT_DROP_REASONS" type="sai_debug_counter_type_t">
+  Counts egress drop reasons aggregated across all ports. Base object: `SAI_OBJECT_TYPE_SWITCH`. Stats are read from `SAI_SWITCH_STAT_OUT_DROP_REASON_RANGE_BASE + index`.
+</ParamField>
+
+## Attributes
+
+<ParamField path="SAI_DEBUG_COUNTER_ATTR_INDEX" type="uint32_t" required>
+  Read-only. The hardware slot index assigned to this counter. Add this to the relevant stat range base to get the stat ID to pass to `get_port_stats` or `get_switch_stats`.
+</ParamField>
+
+<ParamField path="SAI_DEBUG_COUNTER_ATTR_TYPE" type="sai_debug_counter_type_t" required>
+  Counter type. Mandatory at creation time, set once only.
+</ParamField>
+
+<ParamField path="SAI_DEBUG_COUNTER_ATTR_BIND_METHOD" type="sai_debug_counter_bind_method_t">
+  How the counter binds to base objects. Only `SAI_DEBUG_COUNTER_BIND_METHOD_AUTOMATIC` is currently defined: the counter attaches to all instances of the base object type automatically. Defaults to `AUTOMATIC`.
+</ParamField>
+
+<ParamField path="SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST" type="sai_s32_list_t">
+  List of `sai_in_drop_reason_t` values to track. Valid when the counter type is `PORT_IN_DROP_REASONS` or `SWITCH_IN_DROP_REASONS`. Can be updated after creation.
+</ParamField>
+
+<ParamField path="SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST" type="sai_s32_list_t">
+  List of `sai_out_drop_reason_t` values to track. Valid when the counter type is `PORT_OUT_DROP_REASONS` or `SWITCH_OUT_DROP_REASONS`. Can be updated after creation.
+</ParamField>
+
+## Ingress drop reasons (`sai_in_drop_reason_t`)
+
+### L2 drop reasons
+
+| Reason | Description |
+|---|---|
+| `SAI_IN_DROP_REASON_L2_ANY` | Any L2 pipeline drop (catch-all). |
+| `SAI_IN_DROP_REASON_SMAC_MULTICAST` | Source MAC is a multicast address. |
+| `SAI_IN_DROP_REASON_SMAC_EQUALS_DMAC` | Source MAC equals destination MAC. |
+| `SAI_IN_DROP_REASON_DMAC_RESERVED` | Destination MAC is a reserved address (01-80-C2-00-00-0x). |
+| `SAI_IN_DROP_REASON_VLAN_TAG_NOT_ALLOWED` | Tagged frame on a port that drops tagged frames, or untagged frame on a port that drops untagged frames. |
+| `SAI_IN_DROP_REASON_INGRESS_VLAN_FILTER` | Ingress VLAN membership check failed. |
+| `SAI_IN_DROP_REASON_INGRESS_STP_FILTER` | Ingress STP state check failed. |
+| `SAI_IN_DROP_REASON_FDB_UC_DISCARD` | Unicast FDB entry action is discard. |
+| `SAI_IN_DROP_REASON_FDB_MC_DISCARD` | Multicast FDB entry has an empty TX list. |
+| `SAI_IN_DROP_REASON_L2_LOOPBACK_FILTER` | Packet would egress on the same port and VLAN it ingressed on. |
+| `SAI_IN_DROP_REASON_EXCEEDS_L2_MTU` | Packet exceeds the L2 (port) MTU. |
+| `SAI_IN_DROP_REASON_SMAC_ZERO` | Source MAC address is all zeros. |
+| `SAI_IN_DROP_REASON_DMAC_ZERO` | Destination MAC address is all zeros. |
+
+### L3 drop reasons
+
+| Reason | Description |
+|---|---|
+| `SAI_IN_DROP_REASON_L3_ANY` | Any L3 pipeline drop (catch-all). |
+| `SAI_IN_DROP_REASON_EXCEEDS_L3_MTU` | Packet exceeds the L3 (router interface) MTU. |
+| `SAI_IN_DROP_REASON_TTL` | TTL expired (IPv4) or Hop Limit reached (IPv6). |
+| `SAI_IN_DROP_REASON_L3_LOOPBACK_FILTER` | Packet would egress on the same RIF it ingressed on. |
+| `SAI_IN_DROP_REASON_NON_ROUTABLE` | Non-routable packet (e.g., IGMP). |
+| `SAI_IN_DROP_REASON_NO_L3_HEADER` | Destination MAC is the router MAC but the packet carries no routable L3 header. |
+| `SAI_IN_DROP_REASON_IP_HEADER_ERROR` | IP header checksum error, bad IP version, or IPv4 IHL too short. |
+| `SAI_IN_DROP_REASON_UC_DIP_MC_DMAC` | Unicast destination IP paired with a multicast or broadcast destination MAC. |
+| `SAI_IN_DROP_REASON_DIP_LOOPBACK` | Destination IP is a loopback address. |
+| `SAI_IN_DROP_REASON_SIP_LOOPBACK` | Source IP is a loopback address. |
+| `SAI_IN_DROP_REASON_SIP_MC` | Source IP is a multicast address. |
+| `SAI_IN_DROP_REASON_SIP_CLASS_E` | Source IP is in IPv4 Class E space. |
+| `SAI_IN_DROP_REASON_SIP_UNSPECIFIED` | Source IP is the unspecified address (0.0.0.0 or ::). |
+| `SAI_IN_DROP_REASON_MC_DMAC_MISMATCH` | Multicast destination IP does not match the destination MAC. |
+| `SAI_IN_DROP_REASON_SIP_EQUALS_DIP` | Source IP equals destination IP. |
+| `SAI_IN_DROP_REASON_SIP_BC` | IPv4 source IP is limited broadcast (255.255.255.255). |
+| `SAI_IN_DROP_REASON_DIP_LOCAL` | IPv4 destination IP is local network (0.0.0.0/8). |
+| `SAI_IN_DROP_REASON_DIP_LINK_LOCAL` | IPv4 unicast destination is link-local (169.254.0.0/16). |
+| `SAI_IN_DROP_REASON_SIP_LINK_LOCAL` | IPv4 source IP is link-local (169.254.0.0/16). |
+| `SAI_IN_DROP_REASON_IPV6_MC_SCOPE0` | IPv6 destination is in multicast scope 0 (reserved). |
+| `SAI_IN_DROP_REASON_IPV6_MC_SCOPE1` | IPv6 destination is in multicast scope 1 (interface-local). |
+| `SAI_IN_DROP_REASON_IRIF_DISABLED` | Ingress router interface is disabled. |
+| `SAI_IN_DROP_REASON_ERIF_DISABLED` | Egress router interface is disabled. |
+| `SAI_IN_DROP_REASON_LPM4_MISS` | IPv4 LPM routing table lookup missed. |
+| `SAI_IN_DROP_REASON_LPM6_MISS` | IPv6 LPM routing table lookup missed. |
+| `SAI_IN_DROP_REASON_LPM_MISS` | IPv4 or IPv6 LPM routing table lookup missed (combined). |
+| `SAI_IN_DROP_REASON_BLACKHOLE_ROUTE` | Packet matched a blackhole route entry. |
+| `SAI_IN_DROP_REASON_BLACKHOLE_ARP` | Packet matched a blackhole ARP/neighbor entry. |
+| `SAI_IN_DROP_REASON_UNRESOLVED_NEXT_HOP` | Next hop is unresolved (missing ARP/neighbor entry). |
+| `SAI_IN_DROP_REASON_L3_EGRESS_LINK_DOWN` | Egress link to a neighboring device is down (counted on ingress). |
+
+### Tunnel drop reasons
+
+| Reason | Description |
+|---|---|
+| `SAI_IN_DROP_REASON_DECAP_ERROR` | Packet decapsulation failed (e.g., too many bytes to decap, remaining packet too short, UDP port out of range). |
+
+### ACL drop reasons
+
+| Reason | Description |
+|---|---|
+| `SAI_IN_DROP_REASON_ACL_ANY` | Dropped by any ACL rule at any stage or bind point. |
+| `SAI_IN_DROP_REASON_ACL_INGRESS_PORT` | Dropped by an ingress ACL rule bound to a port. |
+| `SAI_IN_DROP_REASON_ACL_INGRESS_LAG` | Dropped by an ingress ACL rule bound to a LAG. |
+| `SAI_IN_DROP_REASON_ACL_INGRESS_VLAN` | Dropped by an ingress ACL rule bound to a VLAN. |
+| `SAI_IN_DROP_REASON_ACL_INGRESS_RIF` | Dropped by an ingress ACL rule bound to a router interface. |
+| `SAI_IN_DROP_REASON_ACL_INGRESS_SWITCH` | Dropped by an ingress ACL rule bound to the switch. |
+| `SAI_IN_DROP_REASON_ACL_EGRESS_PORT` | Dropped by an egress ACL rule bound to a port. |
+| `SAI_IN_DROP_REASON_ACL_EGRESS_LAG` | Dropped by an egress ACL rule bound to a LAG. |
+| `SAI_IN_DROP_REASON_ACL_EGRESS_VLAN` | Dropped by an egress ACL rule bound to a VLAN. |
+| `SAI_IN_DROP_REASON_ACL_EGRESS_RIF` | Dropped by an egress ACL rule bound to a router interface. |
+| `SAI_IN_DROP_REASON_ACL_EGRESS_SWITCH` | Dropped by an egress ACL rule bound to the switch. |
+
+### Other ingress reasons
+
+| Reason | Description |
+|---|---|
+| `SAI_IN_DROP_REASON_FDB_AND_BLACKHOLE_DISCARDS` | Dropped due to FDB action discards or blackhole routes. |
+| `SAI_IN_DROP_REASON_MPLS_MISS` | MPLS routing table lookup missed. |
+| `SAI_IN_DROP_REASON_SRV6_LOCAL_SID_DROP` | Dropped due to SRv6 local SID configuration or incorrect header values. |
+
+## Egress drop reasons (`sai_out_drop_reason_t`)
+
+### L2 egress drop reasons
+
+| Reason | Description |
+|---|---|
+| `SAI_OUT_DROP_REASON_L2_ANY` | Any L2 egress pipeline drop (catch-all). |
+| `SAI_OUT_DROP_REASON_EGRESS_VLAN_FILTER` | Egress VLAN membership check failed. |
+
+### L3 egress drop reasons
+
+| Reason | Description |
+|---|---|
+| `SAI_OUT_DROP_REASON_L3_ANY` | Any L3 egress pipeline drop (catch-all). |
+| `SAI_OUT_DROP_REASON_L3_EGRESS_LINK_DOWN` | Egress link to a neighboring device is down (counted on egress). |
+
+### Tunnel egress drop reasons
+
+| Reason | Description |
+|---|---|
+| `SAI_OUT_DROP_REASON_TUNNEL_LOOPBACK_PACKET_DROP` | Tunnel packet dropped because it would be forwarded back through the same incoming tunnel. |
+
+## API functions
+
+`sai_debug_counter_api_t` contains the following functions:
+
+| Function | Description |
+|---|---|
+| `create_debug_counter` | Creates a new debug counter with a given type and drop reason list. |
+| `remove_debug_counter` | Removes a debug counter and frees its hardware slot. |
+| `set_debug_counter_attribute` | Updates `SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST` or `SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST` after creation. |
+| `get_debug_counter_attribute` | Reads attributes, including the read-only `SAI_DEBUG_COUNTER_ATTR_INDEX`. |
+
+Debug counter stats are read using the **port** or **switch** stats API, not a dedicated debug counter stats function. Use the counter's index to compute the correct stat ID.
+
+## Reading debug counter stats
+
+After creating a debug counter, retrieve its hardware index with `get_debug_counter_attribute`, then add it to the appropriate stats range base constant when calling `get_port_stats_ext` or `get_switch_stats_ext`.
+
+**Port ingress drop stat ID:**
+```
+SAI_PORT_STAT_IN_DROP_REASON_RANGE_BASE + debug_counter_index
+```
+
+**Port egress drop stat ID:**
+```
+SAI_PORT_STAT_OUT_DROP_REASON_RANGE_BASE + debug_counter_index
+```
+
+**Switch ingress drop stat ID:**
+```
+SAI_SWITCH_STAT_IN_DROP_REASON_RANGE_BASE + debug_counter_index
+```
+
+## Usage example
+
+The following example creates two port ingress debug counters and reads their values from a specific port.
+
+```c
+sai_attribute_t attr[2];
+sai_status_t rc;
+
+/* --- Counter 1: track L2 MAC anomalies --- */
+sai_int32_t mac_drop_reasons[] = {
+    SAI_IN_DROP_REASON_SMAC_MULTICAST,
+    SAI_IN_DROP_REASON_SMAC_EQUALS_DMAC,
+    SAI_IN_DROP_REASON_DMAC_RESERVED
+};
+
+attr[0].id                     = SAI_DEBUG_COUNTER_ATTR_TYPE;
+attr[0].value.s32              = SAI_DEBUG_COUNTER_TYPE_PORT_IN_DROP_REASONS;
+attr[1].id                     = SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST;
+attr[1].value.s32list.count    = 3;
+attr[1].value.s32list.list     = mac_drop_reasons;
+
+sai_object_id_t counter_id1;
+rc = sai_debug_counter_api->create_debug_counter(
+    &counter_id1, g_switch_id, 2, attr);
+
+/* Retrieve the hardware slot index */
+attr[0].id = SAI_DEBUG_COUNTER_ATTR_INDEX;
+sai_debug_counter_api->get_debug_counter_attribute(counter_id1, 1, attr);
+uint32_t index1 = attr[0].value.u32;
+
+/* --- Counter 2: track VLAN and STP ingress drops --- */
+sai_int32_t vlan_drop_reasons[] = {
+    SAI_IN_DROP_REASON_VLAN_TAG_NOT_ALLOWED,
+    SAI_IN_DROP_REASON_INGRESS_STP_FILTER
+};
+
+attr[0].id                     = SAI_DEBUG_COUNTER_ATTR_TYPE;
+attr[0].value.s32              = SAI_DEBUG_COUNTER_TYPE_PORT_IN_DROP_REASONS;
+attr[1].id                     = SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST;
+attr[1].value.s32list.count    = 2;
+attr[1].value.s32list.list     = vlan_drop_reasons;
+
+sai_object_id_t counter_id2;
+rc = sai_debug_counter_api->create_debug_counter(
+    &counter_id2, g_switch_id, 2, attr);
+
+attr[0].id = SAI_DEBUG_COUNTER_ATTR_INDEX;
+sai_debug_counter_api->get_debug_counter_attribute(counter_id2, 1, attr);
+uint32_t index2 = attr[0].value.u32;
+
+/* --- Read both counters from a port --- */
+sai_port_stat_t stat_ids[] = {
+    SAI_PORT_STAT_IN_DROP_REASON_RANGE_BASE + index1,
+    SAI_PORT_STAT_IN_DROP_REASON_RANGE_BASE + index2
+};
+uint64_t stats[2];
+rc = sai_port_api->get_port_stats_ext(
+    port_id, 2, stat_ids, SAI_STATS_MODE_READ, stats);
+
+printf("MAC anomaly drops:    %lu\n", stats[0]);
+printf("VLAN/STP drops:       %lu\n", stats[1]);
+```
+
+## Querying capability and availability
+
+Before configuring drop reasons, query which reasons the ASIC actually supports:
+
+```c
+sai_s32_list_t caps;
+int32_t        cap_buf[100];
+caps.count = 100;
+caps.list  = cap_buf;
+
+/* Query supported ingress drop reasons */
+sai_query_attribute_enum_values_capability(
+    switch_id,
+    SAI_OBJECT_TYPE_DEBUG_COUNTER,
+    SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST,
+    &caps);
+
+for (int i = 0; i < (int)caps.count; i++) {
+    printf("Supported in-drop reason: %d\n", caps.list[i]);
+}
+```
+
+To check how many debug counter slots are still available:
+
+```c
+sai_attribute_t type_attr;
+type_attr.id        = SAI_DEBUG_COUNTER_ATTR_TYPE;
+type_attr.value.s32 = SAI_DEBUG_COUNTER_TYPE_PORT_IN_DROP_REASONS;
+
+uint64_t available;
+sai_object_type_get_availability(
+    switch_id,
+    SAI_OBJECT_TYPE_DEBUG_COUNTER,
+    1, &type_attr,
+    &available);
+
+printf("Available PORT_IN_DROP debug counter slots: %lu\n", available);
+```

@@ -1,0 +1,205 @@
+---
+title: "Security"
+description: "Protect network traffic with SAI ACL filtering, MACsec layer-2 encryption, and IPsec tunnel encryption."
+---
+
+SAI provides three security mechanisms that operate at different layers:
+
+- **ACL** — stateless packet filtering at any pipeline stage
+- **MACsec** — IEEE 802.1AE link-layer encryption between directly connected peers
+- **IPsec** — ESP/AH tunnel encryption for routed traffic
+
+<Note>
+MACsec (`SAI_API_MACSEC`) and IPsec (`SAI_API_IPSEC`) are optional capabilities. Check whether the adapter supports them with `sai_query_attribute_capability` or by querying the relevant switch attributes before configuring these features.
+</Note>
+
+## ACL filtering
+
+ACL filtering uses four object types:
+
+- **ACL table** — defines which packet fields are matchable and which actions are available
+- **ACL table group** — aggregates multiple tables for sequential or parallel evaluation
+- **ACL entry** — a rule inside a table with match fields, a priority, and actions
+- **ACL counter** — attached to an entry to count matched packets and bytes
+
+### Create an ACL table
+
+The table declares the set of match fields and action types at creation time. The adapter allocates TCAM resources based on this declaration.
+
+```c
+sai_acl_api_t *acl_api = NULL;
+sai_api_query(SAI_API_ACL, (void **)&acl_api);
+
+/* Declare one match field: source IPv4 address */
+sai_attribute_t field_ip_src = {
+    .id             = SAI_ACL_TABLE_ATTR_FIELD_SRC_IP,
+    .value.booldata = true,
+};
+
+/* Declare one match field: IP protocol */
+sai_attribute_t field_proto = {
+    .id             = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL,
+    .value.booldata = true,
+};
+
+/* Declare supported action types */
+int32_t actions[] = {
+    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+    SAI_ACL_ACTION_TYPE_COUNTER,
+};
+sai_attribute_t action_list_attr = {
+    .id            = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST,
+    .value.s32list = { .count = 2, .list = actions },
+};
+
+/* Ingress table on the switch pipeline stage */
+sai_attribute_t stage_attr = {
+    .id        = SAI_ACL_TABLE_ATTR_ACL_STAGE,
+    .value.s32 = SAI_ACL_STAGE_INGRESS,
+};
+
+sai_attribute_t tbl_attrs[] = {
+    stage_attr,
+    field_ip_src,
+    field_proto,
+    action_list_attr,
+};
+
+sai_object_id_t acl_table_id = SAI_NULL_OBJECT_ID;
+sai_status_t status = acl_api->create_acl_table(
+    &acl_table_id,
+    switch_id,
+    sizeof(tbl_attrs) / sizeof(tbl_attrs[0]),
+    tbl_attrs);
+```
+
+### Create an ACL entry
+
+Entries are installed into a table. Each entry has a priority (higher value = higher priority), match field values with masks, and action values.
+
+```c
+/* Match: src IP 10.0.0.0/8, action: drop */
+sai_attribute_t entry_attrs[] = {
+    {
+        .id        = SAI_ACL_ENTRY_ATTR_TABLE_ID,
+        .value.oid = acl_table_id,
+    },
+    {
+        .id          = SAI_ACL_ENTRY_ATTR_PRIORITY,
+        .value.u32   = 100,
+    },
+    {
+        .id = SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP,
+        .value.aclfield = {
+            .enable   = true,
+            .data.ip4 = htonl(0x0A000000),   /* 10.0.0.0 */
+            .mask.ip4 = htonl(0xFF000000),   /* /8 mask  */
+        },
+    },
+    {
+        .id = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION,
+        .value.aclaction = {
+            .enable        = true,
+            .parameter.s32 = SAI_PACKET_ACTION_DROP,
+        },
+    },
+};
+
+sai_object_id_t acl_entry_id = SAI_NULL_OBJECT_ID;
+status = acl_api->create_acl_entry(
+    &acl_entry_id,
+    switch_id,
+    sizeof(entry_attrs) / sizeof(entry_attrs[0]),
+    entry_attrs);
+```
+
+### Bind an ACL table to a port
+
+```c
+sai_attribute_t bind_attr = {
+    .id        = SAI_PORT_ATTR_INGRESS_ACL,
+    .value.oid = acl_table_id,
+};
+port_api->set_port_attribute(port_id, &bind_attr);
+```
+
+You can also bind an ACL table globally via `SAI_SWITCH_ATTR_INGRESS_ACL` or `SAI_SWITCH_ATTR_EGRESS_ACL`.
+
+### Common ACL action types
+
+| Action | Description |
+|---|---|
+| `SAI_ACL_ACTION_TYPE_PACKET_ACTION` | Forward, drop, trap, copy, log |
+| `SAI_ACL_ACTION_TYPE_COUNTER` | Attach a counter object |
+| `SAI_ACL_ACTION_TYPE_SET_TC` | Override traffic class |
+| `SAI_ACL_ACTION_TYPE_SET_DSCP` | Remark DSCP field |
+| `SAI_ACL_ACTION_TYPE_REDIRECT` | Redirect to a port, next hop, or next hop group |
+| `SAI_ACL_ACTION_TYPE_SET_POLICER` | Apply a rate-limiting policer |
+| `SAI_ACL_ACTION_TYPE_MIRROR_INGRESS` | Send a copy to a mirror session |
+| `SAI_ACL_ACTION_TYPE_MACSEC_FLOW` | Bind a MACsec flow object |
+
+## MACsec (IEEE 802.1AE)
+
+MACsec provides link-layer encryption between two directly connected switches. The SAI MACsec model (`SAI_API_MACSEC`) uses the following hierarchy:
+
+- **MACsec object** — per-direction (ingress/egress) global configuration
+- **MACsec port** — enables MACsec on a physical port
+- **Secure Channel (SC)** — one channel per direction per peer, identified by SCI
+- **Secure Association (SA)** — holds the cryptographic keys for a channel; up to two or four SAs per SC depending on hardware capability
+
+### Cipher suites
+
+`sai_macsec_cipher_suite_t` defines the supported algorithms:
+
+| Value | Algorithm |
+|---|---|
+| `SAI_MACSEC_CIPHER_SUITE_GCM_AES_128` | AES-128-GCM |
+| `SAI_MACSEC_CIPHER_SUITE_GCM_AES_256` | AES-256-GCM |
+| `SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_128` | AES-128-GCM with Extended Packet Numbering |
+| `SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_256` | AES-256-GCM with Extended Packet Numbering |
+
+```c
+sai_macsec_api_t *macsec_api = NULL;
+sai_api_query(SAI_API_MACSEC, (void **)&macsec_api);
+
+/* Create egress MACsec object */
+sai_attribute_t macsec_attr = {
+    .id        = SAI_MACSEC_ATTR_DIRECTION,
+    .value.s32 = SAI_MACSEC_DIRECTION_EGRESS,
+};
+
+sai_object_id_t macsec_id = SAI_NULL_OBJECT_ID;
+macsec_api->create_macsec(&macsec_id, switch_id, 1, &macsec_attr);
+```
+
+The MACsec port, SC, and SA objects are then created and associated with the MACsec object. Key material (SAK, salt, SSI) is provided in the SA attributes and is write-only for security.
+
+## IPsec
+
+IPsec (`SAI_API_IPSEC`) provides ESP-based encryption for routed traffic, typically used in tunnel mode. The SAI IPsec model mirrors the MACsec structure:
+
+- **IPsec object** — per-direction configuration
+- **IPsec port** — enables IPsec on a physical port
+- **IPsec Security Association (SA)** — holds keys and sequence number state
+
+### Cipher suites
+
+`sai_ipsec_cipher_t` lists available algorithms:
+
+| Value | Algorithm |
+|---|---|
+| `SAI_IPSEC_CIPHER_AES128_GCM16` | AES-128-GCM with 16-byte ICV |
+| `SAI_IPSEC_CIPHER_AES256_GCM16` | AES-256-GCM with 16-byte ICV |
+| `SAI_IPSEC_CIPHER_AES128_GMAC` | AES-128-GMAC (authentication only) |
+| `SAI_IPSEC_CIPHER_AES256_GMAC` | AES-256-GMAC (authentication only) |
+
+SA byte-count watermarks trigger notifications via `sai_ipsec_sa_status_notification_t`, allowing the control plane to rotate keys before sequence number exhaustion.
+
+<CardGroup cols={2}>
+  <Card title="L3 Routing" icon="route" href="/guides/routing">
+    Create VRFs, RIFs, and route entries for routed traffic.
+  </Card>
+  <Card title="Telemetry and Monitoring" icon="chart-line" href="/guides/telemetry">
+    Count ACL hits and monitor drop reasons with debug counters.
+  </Card>
+</CardGroup>

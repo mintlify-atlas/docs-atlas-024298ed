@@ -1,0 +1,194 @@
+---
+title: "L3 Routing"
+description: "Configure SAI L3 routing by creating virtual routers, router interfaces, neighbor entries, next hops, and route entries."
+---
+
+SAI models Layer 3 forwarding as a hierarchy of objects: a Virtual Router (VRF) contains Router Interfaces (RIFs), which are associated with physical ports or VLANs. Neighbor entries map IP addresses to MAC addresses on a RIF. Next Hop objects reference a neighbor through a RIF. Route entries bind IP prefixes to next hops (or next hop groups) inside a VRF.
+
+**Route entries differ from regular SAI objects.** Route entries (`sai_route_entry_t`) are keyed structs—not opaque object IDs—because the key itself (switch ID + VRF + IP prefix) uniquely identifies the entry. The `create_route_entry` function takes a `const sai_route_entry_t *` rather than producing an output object ID.
+
+<Steps>
+  <Step title="Create a Virtual Router">
+    A Virtual Router is the L3 routing domain. Every route, neighbor, and next hop belongs to a VRF. The adapter also creates a default VRF at switch creation, accessible via `SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID`.
+
+    ```c
+    sai_virtual_router_api_t *vr_api = NULL;
+    sai_api_query(SAI_API_VIRTUAL_ROUTER, (void **)&vr_api);
+
+    sai_attribute_t vr_attrs[] = {
+        {
+            .id             = SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V4_STATE,
+            .value.booldata = true,
+        },
+        {
+            .id             = SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V6_STATE,
+            .value.booldata = true,
+        },
+    };
+
+    sai_object_id_t vr_id = SAI_NULL_OBJECT_ID;
+    sai_status_t status = vr_api->create_virtual_router(
+        &vr_id,
+        switch_id,
+        sizeof(vr_attrs) / sizeof(vr_attrs[0]),
+        vr_attrs);
+    ```
+
+    `SAI_VIRTUAL_ROUTER_ATTR_SRC_MAC_ADDRESS` defaults to the switch MAC (`SAI_SWITCH_ATTR_SRC_MAC_ADDRESS`) if not set. Override it to give the VRF its own MAC identity.
+  </Step>
+
+  <Step title="Create a Router Interface">
+    A Router Interface (RIF) attaches the VRF to a physical port or VLAN. The `SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID` and `SAI_ROUTER_INTERFACE_ATTR_TYPE` attributes are mandatory.
+
+    ```c
+    sai_router_interface_api_t *rif_api = NULL;
+    sai_api_query(SAI_API_ROUTER_INTERFACE, (void **)&rif_api);
+
+    /* port_id is a sai_object_id_t from the port list */
+    sai_attribute_t rif_attrs[] = {
+        {
+            .id     = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID,
+            .value.oid = vr_id,
+        },
+        {
+            .id     = SAI_ROUTER_INTERFACE_ATTR_TYPE,
+            .value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT,
+        },
+        {
+            .id     = SAI_ROUTER_INTERFACE_ATTR_PORT_ID,
+            .value.oid = port_id,
+        },
+    };
+
+    sai_object_id_t rif_id = SAI_NULL_OBJECT_ID;
+    status = rif_api->create_router_interface(
+        &rif_id,
+        switch_id,
+        sizeof(rif_attrs) / sizeof(rif_attrs[0]),
+        rif_attrs);
+    ```
+
+    For VLAN-based RIFs use `SAI_ROUTER_INTERFACE_TYPE_VLAN` and supply `SAI_ROUTER_INTERFACE_ATTR_VLAN_ID`. For sub-interfaces (802.1Q encapsulation) use `SAI_ROUTER_INTERFACE_TYPE_SUB_PORT` and add `SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID`.
+  </Step>
+
+  <Step title="Create a Neighbor entry">
+    A neighbor entry maps a next-hop IP address to a MAC address on a specific RIF. The key struct `sai_neighbor_entry_t` embeds the switch ID, RIF, and IP address.
+
+    ```c
+    sai_neighbor_api_t *nbr_api = NULL;
+    sai_api_query(SAI_API_NEIGHBOR, (void **)&nbr_api);
+
+    sai_neighbor_entry_t nbr_entry = {
+        .switch_id = switch_id,
+        .rif_id    = rif_id,
+        .ip_address = {
+            .addr_family = SAI_IP_ADDR_FAMILY_IPV4,
+            .addr.ip4    = htonl(0xC0A80101),   /* 192.168.1.1 */
+        },
+    };
+
+    sai_attribute_t nbr_attr = {
+        .id    = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS,
+        .value.mac = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF },
+    };
+
+    status = nbr_api->create_neighbor_entry(&nbr_entry, 1, &nbr_attr);
+    ```
+
+    `SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS` is mandatory. Set `SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE` to `true` for IPv6 link-local neighbors that should not be programmed as a host route in the ASIC.
+  </Step>
+
+  <Step title="Create a Next Hop">
+    A Next Hop object ties the neighbor to a RIF for forwarding purposes. The type, IP address, and router interface are all mandatory on creation.
+
+    ```c
+    sai_next_hop_api_t *nh_api = NULL;
+    sai_api_query(SAI_API_NEXT_HOP, (void **)&nh_api);
+
+    sai_attribute_t nh_attrs[] = {
+        {
+            .id        = SAI_NEXT_HOP_ATTR_TYPE,
+            .value.s32 = SAI_NEXT_HOP_TYPE_IP,
+        },
+        {
+            .id = SAI_NEXT_HOP_ATTR_IP,
+            .value.ipaddr = {
+                .addr_family = SAI_IP_ADDR_FAMILY_IPV4,
+                .addr.ip4    = htonl(0xC0A80101),   /* 192.168.1.1 */
+            },
+        },
+        {
+            .id        = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID,
+            .value.oid = rif_id,
+        },
+    };
+
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+    status = nh_api->create_next_hop(
+        &nh_id,
+        switch_id,
+        sizeof(nh_attrs) / sizeof(nh_attrs[0]),
+        nh_attrs);
+    ```
+
+    For ECMP, create multiple next hop objects and group them with `SAI_API_NEXT_HOP_GROUP`.
+  </Step>
+
+  <Step title="Create a Route entry">
+    Route entries bind an IP prefix (destination) to a next hop inside a VRF. Like neighbor entries, they are keyed structs rather than objects with opaque IDs.
+
+    ```c
+    sai_route_api_t *route_api = NULL;
+    sai_api_query(SAI_API_ROUTE, (void **)&route_api);
+
+    sai_route_entry_t route_entry = {
+        .switch_id   = switch_id,
+        .vr_id       = vr_id,
+        .destination = {
+            .addr_family = SAI_IP_ADDR_FAMILY_IPV4,
+            .addr.ip4    = htonl(0x0A000000),   /* 10.0.0.0/8 */
+            .mask.ip4    = htonl(0xFF000000),
+        },
+    };
+
+    sai_attribute_t route_attr = {
+        .id        = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID,
+        .value.oid = nh_id,
+    };
+
+    status = route_api->create_route_entry(&route_entry, 1, &route_attr);
+    ```
+
+    `SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION` defaults to `SAI_PACKET_ACTION_FORWARD`. Set it to `SAI_PACKET_ACTION_DROP` for a blackhole route. For directly attached subnets, set `SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID` to the RIF object ID instead of a next hop.
+  </Step>
+</Steps>
+
+## Route entries versus route objects
+
+| Characteristic | Route entry (`sai_route_entry_t`) | Regular SAI object |
+|---|---|---|
+| Key | Struct: switch ID + VRF + IP prefix | Opaque `sai_object_id_t` |
+| Create output | None (key is the identity) | New object ID |
+| Bulk operations | `create_route_entries`, `remove_route_entries` | `create_*` / `remove_*` |
+| Resource tracking | `SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY` | `sai_object_type_get_availability` |
+
+The same key-based pattern applies to neighbor entries (`sai_neighbor_entry_t`) and FDB entries (`sai_fdb_entry_t`).
+
+## Teardown order
+
+Remove objects in reverse dependency order to avoid `SAI_STATUS_OBJECT_IN_USE` errors:
+
+1. Route entries (`remove_route_entry`)
+2. Next hops (`remove_next_hop`)
+3. Neighbor entries (`remove_neighbor_entry`)
+4. Router interfaces (`remove_router_interface`)
+5. Virtual router (`remove_virtual_router`)
+
+<CardGroup cols={2}>
+  <Card title="Switch Initialization" icon="power-off" href="/guides/switch-initialization">
+    Initialize the adapter and create the switch object.
+  </Card>
+  <Card title="Security" icon="shield-halved" href="/guides/security">
+    Filter routed traffic with ACL entries and protect links with MACsec.
+  </Card>
+</CardGroup>

@@ -1,0 +1,272 @@
+---
+title: "Extensions"
+description: "How to add custom attributes and new SAI modules without modifying the core SAI headers."
+---
+
+SAI Extensions provide a formal mechanism for introducing features that are not yet part of the official SAI specification. They come in two forms: **custom attributes** on existing objects, and **new experimental SAI modules** with their own object types and API tables. Both forms live in the `experimental/` directory and are gated by their own enum ranges, so they cannot collide with standard SAI values and do not require changes to the core headers.
+
+## Why extensions exist
+
+The extension process is designed to:
+
+- Allow vendors and the SAI community to innovate without waiting for a specification revision.
+- Increase velocity by providing a well-defined path from experimental to mainline.
+- Give a formalism for publishing features so that multiple implementations can interoperate.
+
+Extensions are optional — a vendor that does not support a given extension ignores it, and the control stack must be prepared to handle `SAI_STATUS_NOT_SUPPORTED` or `SAI_STATUS_ATTR_NOT_SUPPORTED_0` when it uses an extension the adapter does not implement.
+
+## Extension requirements
+
+A feature can be accepted as an experimental extension if it meets the following criteria:
+
+- It must be **published** in the `experimental/` directory as a proper header file.
+- It must follow the SAI conventions for defining module APIs: CRUD functions, attribute key-value pairs, and enum naming.
+- It must be **supported by at least two members** of the SAI community.
+- Experimental attributes must **not** require changes to existing SAI data structures or existing SAI APIs. New data structures, if needed, may be added to the extension header file.
+
+The implicit goal is that experimental extensions eventually graduate to the main SAI API once they have sufficient community support.
+
+## Numeric ranges
+
+Every standard SAI API and object type is assigned a sequential integer value. Extensions occupy separate, non-overlapping ranges to prevent collisions:
+
+### API ranges (`sai_api_t` / `sai_api_extensions_t`)
+
+```c
+/* sai.h — standard API IDs */
+SAI_API_MAX                     /* end of standard range */
+
+/* sai.h — custom range for one-off vendor-specific APIs */
+SAI_API_CUSTOM_RANGE_BASE       = 0x10000000,
+
+/* sai.h — extensions range for published experimental APIs */
+SAI_API_EXTENSIONS_RANGE_BASE   = 0x20000000,
+```
+
+### Object type ranges (`sai_object_type_t`)
+
+```c
+/* saitypes.h */
+SAI_OBJECT_TYPE_MAX                     /* end of standard range */
+
+SAI_OBJECT_TYPE_CUSTOM_RANGE_BASE       = 0x10000000,
+SAI_OBJECT_TYPE_EXTENSIONS_RANGE_BASE   = 0x20000000,
+```
+
+Extensions that are published and accepted by the community use the `EXTENSIONS_RANGE_BASE`. Purely private, unpublished vendor additions use the `CUSTOM_RANGE_BASE`.
+
+## Type 1: Custom attributes on existing objects
+
+A custom attribute extends an existing SAI object type with new properties, without touching the object's official header. The extension header includes the official header, then defines additional attribute IDs starting after `SAI_XXX_ATTR_END`.
+
+The `experimental/` directory contains one extension header per module. For ports, this is `experimental/saiportextensions.h`:
+
+```c
+/* experimental/saiportextensions.h */
+#include <saiport.h>
+#include <saitypes.h>
+
+/**
+ * @brief SAI port attribute extensions.
+ * @flags free
+ */
+typedef enum _sai_port_attr_extensions_t
+{
+    SAI_PORT_ATTR_EXTENSIONS_RANGE_START = SAI_PORT_ATTR_EXTENSIONS_RANGE_BASE,
+
+    /* Add new experimental port attributes above this line */
+
+    SAI_PORT_ATTR_EXTENSIONS_RANGE_END
+
+} sai_port_attr_extensions_t;
+```
+
+The `SAI-Extensions.md` specification document gives a concrete example of a vendor adding an LED state attribute:
+
+```c
+/* experimental/saiportextensions.h (with a custom LED attribute added) */
+typedef enum _sai_port_extensions_attr_t
+{
+    SAI_PORT_ATTR_LED_STATE = SAI_PORT_ATTR_CUSTOM_RANGE_START,
+} sai_port_attr_extensions_t;
+
+/**
+ * @brief Attribute data for SAI_PORT_ATTR_LED_STATE
+ */
+typedef enum _sai_port_led_state_t
+{
+    SAI_PORT_LED_STATE_UNKNOWN,
+    SAI_PORT_LED_ON,
+    SAI_PORT_LED_OFF,
+} sai_port_led_state_t;
+```
+
+Using the custom attribute in an Adapter Host requires explicitly including the extension header:
+
+```c
+#include <saiport.h>
+#include <experimental/saiportextensions.h>
+
+sai_attribute_t attr;
+attr.id        = SAI_PORT_ATTR_LED_STATE;
+attr.value.s32 = SAI_PORT_LED_ON;
+
+sai_status_t status = port_api->set_port_attribute(port_id, &attr);
+if (status == SAI_STATUS_ATTR_NOT_SUPPORTED_0) {
+    /* This adapter does not implement LED state control */
+}
+```
+
+<Note>
+The explicit `#include` of the extension header is intentional. It makes it straightforward to audit which source files depend on experimental features using a simple search for `experimental` in the codebase.
+</Note>
+
+## Type 2: New experimental SAI modules
+
+A new experimental module introduces a fresh object type, its own attribute enum, and a full CRUD API table. This is the right approach when a protocol or feature cannot be expressed as attributes on an existing object.
+
+### The `saiextensions.h` aggregator
+
+`experimental/saiextensions.h` is the single include file for all experimental modules. It includes the standard `sai.h`, the type extensions file, and every experimental module header. It then declares `sai_api_extensions_t` — the extension equivalent of `sai_api_t`:
+
+```c
+/* experimental/saiextensions.h */
+#include <sai.h>
+#include <saitypes.h>
+
+#include "saitypesextensions.h"
+#include "saiswitchextensions.h"
+#include "saiportextensions.h"
+
+/* new experimental object type includes */
+#include "saiexperimentaldashacl.h"
+#include "saiexperimentaldasheni.h"
+#include "saiexperimentaldashvnet.h"
+/* ... */
+#include "saiexperimentalbmtor.h"
+
+typedef enum _sai_api_extensions_t
+{
+    SAI_API_EXTENSIONS_RANGE_START = SAI_API_EXTENSIONS_RANGE_BASE,
+
+    SAI_API_BMTOR = SAI_API_EXTENSIONS_RANGE_START,
+    SAI_API_DASH_ACL,
+    SAI_API_DASH_DIRECTION_LOOKUP,
+    SAI_API_DASH_ENI,
+    SAI_API_DASH_INBOUND_ROUTING,
+    SAI_API_DASH_METER,
+    SAI_API_DASH_OUTBOUND_CA_TO_PA,
+    SAI_API_DASH_OUTBOUND_ROUTING,
+    SAI_API_DASH_VNET,
+    SAI_API_DASH_PA_VALIDATION,
+    SAI_API_DASH_VIP,
+    SAI_API_DASH_HA,
+    SAI_API_DASH_TUNNEL,
+    SAI_API_DASH_FLOW,
+    SAI_API_DASH_APPLIANCE,
+    SAI_API_DASH_OUTBOUND_PORT_MAP,
+    SAI_API_DASH_TRUSTED_VNI,
+
+    /* Add new experimental APIs above this line */
+    SAI_API_EXTENSIONS_RANGE_END
+
+} sai_api_extensions_t;
+```
+
+Querying an experimental API follows the same pattern as a standard one — pass the extension ID to `sai_api_query`:
+
+```c
+#include "experimental/saiextensions.h"
+
+sai_dash_eni_api_t *dash_eni_api = NULL;
+
+sai_status_t status = sai_api_query(
+    (sai_api_t)SAI_API_DASH_ENI,
+    (void **)&dash_eni_api);
+
+if (status != SAI_STATUS_SUCCESS) {
+    /* Adapter does not implement the DASH ENI module */
+}
+```
+
+### Defining a new module header
+
+An experimental module header must include a Doxygen warning that names the supporting implementations:
+
+```c
+/**
+ * @file    saiexperimentalprotox.h
+ *
+ * @brief   Experimental Protocol X SAI extension
+ *
+ * @description Supported by: Acme Corp, Better Electrons Inc.
+ *
+ * @warning This module is a SAI experimental module.
+ *          It may not be supported by all SAI implementations.
+ */
+
+typedef sai_status_t (*sai_create_protox_fn)(
+    _Out_ sai_object_id_t *protox_id,
+    _In_  sai_object_id_t  switch_id,
+    _In_  uint32_t         attr_count,
+    _In_  const sai_attribute_t *attr_list);
+
+typedef sai_status_t (*sai_remove_protox_fn)(
+    _In_ sai_object_id_t protox_id);
+
+typedef struct _sai_protox_api_t
+{
+    sai_create_protox_fn  create_protox;
+    sai_remove_protox_fn  remove_protox;
+    /* get / set functions follow the same pattern */
+} sai_protox_api_t;
+```
+
+## DASH extensions as a real-world example
+
+The Disaggregated APIs for SONiC Hosts (DASH) project is the largest body of experimental SAI modules currently in the `experimental/` directory. DASH defines a suite of APIs for stateful SmartNIC workloads — ENI (Elastic Network Interface) management, VNET routing, ACL pipelines, HA (High Availability) pairing, flow tracking, and more.
+
+Each DASH sub-feature has its own header file (`saiexperimentaldasheni.h`, `saiexperimentaldashacl.h`, etc.) and its own entry in `sai_api_extensions_t`. Together they demonstrate the full range of what the extension mechanism supports: new object types, new attribute enums, new stat counters (via `saiportextensions.h`), and new API method tables.
+
+<Tip>
+If you are building a feature that you intend to eventually propose for the mainline SAI specification, model your extension after the DASH headers. They are the best existing example of the full extension pattern applied at scale.
+</Tip>
+
+## Extension stat counters
+
+Extensions can also add statistics counters to existing objects. `saiportextensions.h` shows this pattern for DASH-specific port stats:
+
+```c
+typedef enum _sai_port_stat_extensions_t
+{
+    SAI_PORT_STAT_EXTENSIONS_RANGE_START = SAI_PORT_STAT_EXTENSIONS_RANGE_BASE,
+
+    /** DASH: load-balancer fast-path ICMP bytes */
+    SAI_PORT_STAT_LB_FAST_PATH_ICMP_IN_BYTES = SAI_PORT_STAT_EXTENSIONS_RANGE_START,
+
+    /** DASH: load-balancer fast-path ICMP packets */
+    SAI_PORT_STAT_LB_FAST_PATH_ICMP_IN_PACKETS,
+
+    /** DASH: ENI miss drop packets */
+    SAI_PORT_STAT_ENI_MISS_DROP_PACKETS,
+
+    /* Add new experimental port stats above this line */
+    SAI_PORT_STAT_EXTENSIONS_RANGE_END
+
+} sai_port_stat_extensions_t;
+```
+
+<CardGroup cols={2}>
+  <Card title="Object model" icon="cubes" href="/concepts/object-model">
+    Object type ranges and how extension types fit into the OID space.
+  </Card>
+  <Card title="Attributes" icon="sliders" href="/concepts/attributes">
+    Attribute flag system that extension attributes also use.
+  </Card>
+  <Card title="Adapter" icon="plug" href="/concepts/adapter">
+    How the Adapter exposes both standard and extension API tables.
+  </Card>
+  <Card title="API overview" icon="code" href="/api/overview">
+    Index of all standard and extension SAI APIs.
+  </Card>
+</CardGroup>

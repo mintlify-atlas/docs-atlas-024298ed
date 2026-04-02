@@ -1,0 +1,100 @@
+---
+title: "SAI 1.16.1 Release Notes"
+description: "Release notes for SAI 1.16.1, covering all API changes from SAI 1.15.1 to 1.16.1."
+---
+
+SAI 1.16.1 is the latest release of the Switch Abstraction Interface. This document covers all API changes from SAI tag **1.15.1** to SAI tag **1.16.1**.
+
+- **Release:** SAI 1.16.1
+- **Previous release:** [SAI 1.15.1 release notes](https://github.com/opencomputeproject/SAI/blob/master/doc/SAI_1.15.1_ReleaseNotes.md)
+
+<Note>
+  For the full commit history, visit the [SAI GitHub repository](https://github.com/opencomputeproject/SAI).
+</Note>
+
+## Enhancements in this release
+
+<AccordionGroup>
+
+  <Accordion title="New features">
+
+    - **Next hop group with members** — [PR #2013](https://github.com/opencomputeproject/SAI/pull/2013): Support for creating next hop groups with an inline member list.
+    - **Prefix compression** — [PR #2045](https://github.com/opencomputeproject/SAI/pull/2045): Prefix compression feature addition to SAI.
+    - **EVPN multi-home support** — [PR #2084](https://github.com/opencomputeproject/SAI/pull/2084): EVPN multi-homing support added to SAI.
+    - **Packet trimming API** — [PR #2077](https://github.com/opencomputeproject/SAI/pull/2077): New API for packet trimming with DSCP resolution from TC ([PR #2155](https://github.com/opencomputeproject/SAI/pull/2155)).
+    - **Round-robin packet spraying** — [PR #2078](https://github.com/opencomputeproject/SAI/pull/2078): Round-robin packet spraying and per-ECMP/LAG selection.
+    - **Synchronous Ethernet** — [PR #2146](https://github.com/opencomputeproject/SAI/pull/2146): SAI proposal for Synchronous Ethernet support.
+    - **TAM stream telemetry** — [PR #2089](https://github.com/opencomputeproject/SAI/pull/2089): SAI proposal for TAM stream telemetry.
+    - **Custom vendor headers** — [PR #2122](https://github.com/opencomputeproject/SAI/pull/2122): Proposal to support custom vendor headers.
+    - **IPMC group with member list** — [PR #2121](https://github.com/opencomputeproject/SAI/pull/2121): Support for creating and modifying IPMC groups with a member list.
+
+  </Accordion>
+
+  <Accordion title="API additions and attribute changes">
+
+    - **Label attributes for Policer, RIF, Scheduler, and UDF** — [PR #2046](https://github.com/opencomputeproject/SAI/pull/2046)
+    - **uSID endpoint enums for udx and udt** — [PR #2102](https://github.com/opencomputeproject/SAI/pull/2102)
+    - **Per-attribute API version** — [PR #2100](https://github.com/opencomputeproject/SAI/pull/2100): Adds API version tracking on each attribute.
+    - **Extended port oper status notification** — [PR #2087](https://github.com/opencomputeproject/SAI/pull/2087): New extended port operational status notification with error details.
+    - **Port error status restored** — [PR #2145](https://github.com/opencomputeproject/SAI/pull/2145): Adds back `port_error_status` to `sai_port_oper_status_notification_t`.
+    - **HA session bounceback IP attribute** — [PR #2091](https://github.com/opencomputeproject/SAI/pull/2091)
+    - **ACL actions for inner MACs** — [PR #2079](https://github.com/opencomputeproject/SAI/pull/2079): New ACL actions for setting inner source and destination MACs.
+    - **Occupancy and watermark counters in cells** — [PR #2092](https://github.com/opencomputeproject/SAI/pull/2092)
+    - **LAG member weight attribute** — [PR #2143](https://github.com/opencomputeproject/SAI/pull/2143): New LAG member attribute for weight-based load balancing.
+    - **Switch-level PTP control** — [PR #2148](https://github.com/opencomputeproject/SAI/pull/2148): New switch attribute to control PTP for the entire switch.
+    - **Next hop group label** — [PR #2140](https://github.com/opencomputeproject/SAI/pull/2140): Label attribute to uniquely identify next hop groups.
+    - **PAM4 eye height values** — [PR #2154](https://github.com/opencomputeproject/SAI/pull/2154): New port attribute to fetch PAM4 eye height values.
+    - **Hashing enhancements for RoCE** — [PR #2144](https://github.com/opencomputeproject/SAI/pull/2144): Hashing enhancements for efficient RoCE traffic distribution.
+    - **BFD next hop ID attribute** — [PR #2127](https://github.com/opencomputeproject/SAI/pull/2127): New `SAI_BFD_SESSION_ATTR_NEXT_HOP_ID` attribute.
+    - **ERSPAN mirror session enhancements** — [PR #2142](https://github.com/opencomputeproject/SAI/pull/2142)
+    - **TAM enhancements** — [PR #2141](https://github.com/opencomputeproject/SAI/pull/2141)
+    - **RIF My MAC suppression** — [PR #2021](https://github.com/opencomputeproject/SAI/pull/2021): RIF attribute to skip creation of the corresponding My MAC entry.
+    - **Additional Ethernet packet stats for Cisco platforms** — [PR #1997](https://github.com/opencomputeproject/SAI/pull/1997)
+
+  </Accordion>
+
+  <Accordion title="DASH enhancements">
+
+    - **Update DASH flow and tunnel** — [PR #2093](https://github.com/opencomputeproject/SAI/pull/2093)
+    - **Mark appliance table local region ID as create-only** — [PR #2094](https://github.com/opencomputeproject/SAI/pull/2094)
+    - **Change action parameter type in DASH Flow API** — [PR #2101](https://github.com/opencomputeproject/SAI/pull/2101)
+    - **New ENI attribute `SAI_ENI_ATTR_FLOW_TABLE_ID`** — [PR #2149](https://github.com/opencomputeproject/SAI/pull/2149)
+    - **DASH outbound portmap** — [PR #2137](https://github.com/opencomputeproject/SAI/pull/2137)
+    - **ENI mode VM/FNIC and trusted_vni entry** — [PR #2158](https://github.com/opencomputeproject/SAI/pull/2158)
+
+  </Accordion>
+
+  <Accordion title="SRv6 improvements">
+
+    - **SRv6 uSID behaviors added to validonly lists** — [PR #2120](https://github.com/opencomputeproject/SAI/pull/2120)
+    - **Extend validonly list for `SAI_MY_SID_ENTRY_ATTR_TUNNEL_ID`** — [PR #2130](https://github.com/opencomputeproject/SAI/pull/2130)
+
+  </Accordion>
+
+  <Accordion title="MACsec">
+
+    - **Add `macsec_port_id` to flow object** — [PR #2003](https://github.com/opencomputeproject/SAI/pull/2003): Updates `saimacsec.h` to include the MACsec port ID on the flow object.
+
+  </Accordion>
+
+  <Accordion title="Metadata, tooling, and infrastructure">
+
+    - **Rename values in `saiattrversion.h`** — [PR #2109](https://github.com/opencomputeproject/SAI/pull/2109)
+    - **Fix `iscustom` attribute field** — [PR #2110](https://github.com/opencomputeproject/SAI/pull/2110)
+    - **Stable SAI switch pointer attribute list** — [PR #2111](https://github.com/opencomputeproject/SAI/pull/2111)
+    - **Custom range base enums for API and object_type** — [PR #2112](https://github.com/opencomputeproject/SAI/pull/2112)
+    - **Unify `SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_CUSTOM_RANGE_BASE` value** — [PR #2114](https://github.com/opencomputeproject/SAI/pull/2114)
+    - **Update history files** — [PR #2113](https://github.com/opencomputeproject/SAI/pull/2113)
+    - **Check global functions return type** — [PR #2115](https://github.com/opencomputeproject/SAI/pull/2115)
+    - **Fix missing attr value for object type enum** — [PR #2095](https://github.com/opencomputeproject/SAI/pull/2095)
+    - **Fix enum initializers list for ancestry check** — [PR #2157](https://github.com/opencomputeproject/SAI/pull/2157)
+    - **Update check attr condition/validonly** — [PR #2126](https://github.com/opencomputeproject/SAI/pull/2126)
+    - **Allow validonly attr to be conditioned on other validonly** — [PR #2131](https://github.com/opencomputeproject/SAI/pull/2131)
+    - **Remove mandatory flag on TAM DSCP attribute** — [PR #2133](https://github.com/opencomputeproject/SAI/pull/2133)
+    - **Allow overriding `SAI_HEADER_DIR`** — [PR #2161](https://github.com/opencomputeproject/SAI/pull/2161)
+    - **Fix for RPC build failure** — [PR #2097](https://github.com/opencomputeproject/SAI/pull/2097)
+    - **Add word bounceback to aspell** — [PR #2090](https://github.com/opencomputeproject/SAI/pull/2090)
+
+  </Accordion>
+
+</AccordionGroup>

@@ -1,28 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Switch Abstraction Interface (SAI)",
+  "projectType": "sdk-library",
+  "projectName": "Switch Abstraction Interface (SAI)",
+  "projectDescription": "A vendor-independent C API specification for controlling network forwarding elements such as switching ASICs, NPUs, and software switches in a uniform manner.",
   "theme": "aspen",
-  "colors": {
-    "primary": "#08a8e7",
-    "light": "#cf9b0b",
-    "dark": "#fc5124"
-  },
-  "favicon": "https://media.brand.dev/90848f9d-e6e9-473e-937d-7d4663895dfb.png",
-  "logo": {
-    "light": "https://media.brand.dev/bd43edb4-ecd6-4892-9153-4dc8d1ffd593.png",
-    "dark": "https://media.brand.dev/bd43edb4-ecd6-4892-9153-4dc8d1ffd593.png"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/opencomputeproject/SAI"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/opencomputeproject/SAI"
-    }
-  },
+  "primaryColor": "#08a8e7",
+  "lightColor": "#cf9b0b",
+  "darkColor": "#fc5124",
   "navigation": {
     "tabs": [
       {
@@ -107,5 +90,35 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Vendor-independent C API for controlling switching ASICs, NPUs, and software switches",
+    "CRUD-based object model with attribute-based configuration for extensibility",
+    "55+ API modules covering switching, routing, QoS, security, tunneling, and telemetry",
+    "Extension mechanism for experimental and vendor-specific features",
+    "Support for warm reboot and stateless adapter design",
+    "Metadata framework for attribute validation and auto-generated RPC stubs",
+    "DASH (Disaggregated APIs for SONiC Hosts) experimental extensions for cloud networking"
+  ],
+  "publicApiSurface": [
+    "sai_api_initialize()",
+    "sai_api_query()",
+    "sai_api_uninitialize()",
+    "sai_object_type_query()",
+    "sai_switch_id_query()",
+    "sai_object_type_get_availability()",
+    "sai_dbg_generate_dump()",
+    "sai_log_set()",
+    "sai_switch_api_t (create/remove/get/set switch)",
+    "sai_port_api_t (create/remove/get/set port)",
+    "sai_fdb_api_t (create/remove/flush/get/set FDB entries)",
+    "sai_vlan_api_t (create/remove/get/set VLANs)",
+    "sai_route_api_t (create/remove/get/set routes)",
+    "sai_next_hop_api_t (create/remove/get/set next hops)",
+    "sai_acl_api_t (create/remove/get/set ACL tables and entries)",
+    "sai_tunnel_api_t (create/remove/get/set tunnels)",
+    "sai_macsec_api_t (create/remove/get/set MACsec objects)",
+    "sai_tam_api_t (telemetry and monitoring)",
+    "sai_counter_api_t (generic counters)"
+  ]
 }

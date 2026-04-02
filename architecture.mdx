@@ -1,0 +1,215 @@
+---
+title: "Architecture"
+description: "How the SAI three-layer model connects a network OS to switching hardware through a pluggable adapter."
+---
+
+SAI sits between a network operating system and the hardware that forwards packets. This page explains the layered design, how adapters are loaded, how objects are managed across their lifecycle, and how multiple consumers of the same forwarding element can co-exist.
+
+## Three-layer model
+
+SAI defines three distinct software layers between the application and the hardware:
+
+```
+┌──────────────────────────────────────┐
+│           Control Stack              │  NOS daemons, routing agents,
+│  (routing, telemetry, management)    │  orchestrators (e.g. SONiC syncd)
+└──────────────────┬───────────────────┘
+                   │  calls SAI C API
+┌──────────────────▼───────────────────┐
+│           Adapter Host               │  loads the adapter .so,
+│  (SAI caller / library loader)       │  owns sai_api_initialize()
+└──────────────────┬───────────────────┘
+                   │  dlopen / function table
+┌──────────────────▼───────────────────┐
+│             Adapter                  │  vendor-supplied shared library,
+│  (vendor SAI implementation)         │  translates SAI → SDK calls
+└──────────────────┬───────────────────┘
+                   │  vendor SDK / PCIe / kernel driver
+┌──────────────────▼───────────────────┐
+│        Forwarding Element            │  switching ASIC, NPU, or
+│  (ASIC / NPU / software switch)      │  software switch
+└──────────────────────────────────────┘
+```
+
+### Control stack
+
+The control stack is the collection of software that wants to program the forwarding element: routing daemons, ACL managers, telemetry collectors, orchestration agents. It is also sometimes called the "application" or "user" in the SAI specification. The control stack does not talk to the hardware directly—it only calls SAI APIs.
+
+### Adapter host
+
+The adapter host is the process that loads the adapter shared library and owns the SAI session. It calls `sai_api_initialize()`, retrieves method tables via `sai_api_query()`, and is the only component that communicates directly with the adapter. In SONiC, `syncd` is the adapter host.
+
+The adapter host also supplies the `sai_service_method_table_t`, which gives the adapter a callback mechanism to read configuration profiles (vendor-specific key-value pairs) during initialization.
+
+### Adapter
+
+The adapter is a vendor-supplied shared library (typically `libsai.so`) that implements every required SAI function for a specific forwarding element. It is the only component that contains vendor-specific or SDK-specific code. The rest of the stack is entirely portable across vendors.
+
+Key properties of an adapter:
+
+- **Stateless by design.** The adapter holds no critical persistent configuration. If it crashes or is restarted, the control stack replays the configuration and the adapter returns to the correct state.
+- **Discovery on init.** During `create_switch`, the adapter discovers the physical forwarding element using a hardware ID string (for example, a PCIe bus address) and maps device registers.
+- **No persistence required.** The adapter may use NV storage for performance, but correctness does not depend on it.
+
+### Forwarding element
+
+The forwarding element is the entity that actually moves packets: a switching ASIC, an NPU, or a software switch. It is opaque to all layers above the adapter.
+
+## Adapter loading model
+
+The adapter host loads the adapter as a POSIX shared library using `dlopen`. Three symbols must be present in every compliant adapter:
+
+| Symbol | Purpose |
+|---|---|
+| `sai_api_initialize` | Software-only initialization; passes the service method table to the adapter |
+| `sai_api_query` | Returns a pointer to a C method table for a requested API group |
+| `sai_api_uninitialize` | Cleanup before the library is unloaded |
+
+No other symbols need to be exported. All API discovery after `sai_api_initialize` goes through `sai_api_query`, which keeps the ABI surface minimal and version-safe.
+
+```c
+/* Adapter host startup sequence */
+void *lib = dlopen("/usr/lib/libsai.so", RTLD_LAZY | RTLD_GLOBAL);
+
+sai_api_initialize(0, &service_methods);   /* software init only  */
+
+sai_switch_api_t *switch_api = NULL;
+sai_api_query(SAI_API_SWITCH, (void **)&switch_api); /* get method table */
+
+switch_api->create_switch(&switch_id, attr_count, attrs); /* init hardware */
+```
+
+## Object lifecycle (CRUD)
+
+Every entity in the forwarding plane is a SAI object. SAI defines a uniform four-operation lifecycle for all object types:
+
+<Steps>
+
+<Step title="Create">
+  The caller passes a list of `sai_attribute_t` pairs to a `create_<object>` function. The adapter allocates hardware resources and returns an opaque `sai_object_id_t`. Optional attributes that are not specified receive adapter-chosen defaults. Mandatory attributes that are missing cause the create to fail.
+
+  ```c
+  /* Route entries are key-based structs, not opaque OIDs.
+     The key (switch_id + vr_id + destination prefix) is the identity. */
+  sai_route_entry_t route_entry;
+  route_entry.switch_id   = switch_id;
+  route_entry.vr_id       = vr_id;
+  route_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  route_entry.destination.addr.ip4    = htonl(0x0A000000); /* 10.0.0.0 */
+  route_entry.destination.mask.ip4    = htonl(0xFF000000); /* /8       */
+
+  sai_attribute_t attrs[2];
+  attrs[0].id        = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+  attrs[0].value.oid = nexthop_id;
+  attrs[1].id        = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+  attrs[1].value.s32 = SAI_PACKET_ACTION_FORWARD;
+
+  /* create_route_entry does not return an object ID — the key is the identity */
+  route_api->create_route_entry(&route_entry, 2, attrs);
+  ```
+</Step>
+
+<Step title="Read (get)">
+  The caller allocates a list of `sai_attribute_t` structs with the desired attribute IDs. The adapter fills in the values. If a list-type attribute buffer is too small, the adapter returns `SAI_STATUS_BUFFER_OVERFLOW` and fills in the required count so the caller can reallocate and retry.
+
+  ```c
+  sai_attribute_t attr;
+  attr.id = SAI_SWITCH_ATTR_PORT_NUMBER;
+  switch_api->get_switch_attribute(switch_id, 1, &attr);
+  printf("port count: %u\n", attr.value.u32);
+  ```
+</Step>
+
+<Step title="Update (set)">
+  Attributes marked as writable after creation can be updated with a single `set_<object>_attribute` call. Only one attribute is updated per call.
+
+  ```c
+  sai_attribute_t attr;
+  attr.id        = SAI_PORT_ATTR_ADMIN_STATE;
+  attr.value.booldata = true;
+  port_api->set_port_attribute(port_id, &attr);
+  ```
+</Step>
+
+<Step title="Delete (remove)">
+  The caller passes the object ID to a `remove_<object>` function. The adapter frees hardware resources. Deletion fails with `SAI_STATUS_OBJECT_IN_USE` if another object still holds a reference to the one being deleted—for example, removing a virtual router while router interfaces still reference it.
+
+  ```c
+  /* Remove a next hop only after routes referencing it are deleted */
+  next_hop_api->remove_next_hop(nexthop_id);
+  ```
+</Step>
+
+</Steps>
+
+<Note>
+  Object IDs (`sai_object_id_t`) are opaque `uint64_t` values generated by the
+  adapter. A common implementation embeds the object type in the upper bits and a
+  hardware-specific index in the lower bits, but this is not mandated by the
+  specification.
+</Note>
+
+## Multiple adapter hosts
+
+A single forwarding element can be shared by multiple adapter hosts running concurrently. Each adapter host initializes its own SAI session and calls `sai_api_initialize` independently. The adapter is responsible for synchronizing concurrent access.
+
+A typical split in SONiC:
+
+- **syncd**: the primary adapter host; calls `create_switch` with `SAI_SWITCH_ATTR_INIT_SWITCH = true` to initialize the hardware.
+- **sai_redis / gearsyncd / other daemons**: secondary adapter hosts that connect to an already-running adapter without reinitializing the hardware (using `SAI_SWITCH_ATTR_INIT_SWITCH = false`).
+
+<Info>
+  When multiple adapter hosts share a forwarding element, each is typically
+  responsible for a distinct functional domain—for example, one host programs
+  routes while another collects counters. Coordination between hosts is the
+  responsibility of the control stack, not the adapter.
+</Info>
+
+## Versioning and API compatibility
+
+SAI uses enumeration-based versioning for its API groups. If the signature or semantics of a function must change, a new API ID is allocated (for example, `SAI_API_VLAN2`) and the old ID remains valid. The adapter host queries the latest version first and falls back to older versions until it finds one the adapter supports.
+
+This scheme means:
+
+- Old adapter hosts work with new adapters (which still expose old IDs).
+- New adapter hosts work with old adapters (by falling back to the version the adapter supports).
+- Breaking changes are explicit and traceable.
+
+## Warm reboot and stateless design
+
+Because the adapter holds no persistent critical state, the control stack can restart an adapter without disrupting the data plane:
+
+1. The adapter host calls `sai_api_uninitialize()` and unloads the library.
+2. The data plane continues forwarding packets using hardware-programmed state.
+3. A new adapter is loaded and initialized.
+4. The control stack replays its in-memory configuration to bring the adapter back to the correct state.
+
+This property is central to SONiC's warm reboot feature, where the NOS can upgrade or restart without dropping traffic.
+
+<Warning>
+  The data plane remains active during adapter restart, but any notifications
+  (link state changes, FDB events, etc.) from the forwarding element may be lost
+  while the adapter is not running. The control stack must be prepared to
+  reconcile state after reconnection.
+</Warning>
+
+## Mandatory vs. optional APIs
+
+SAI divides its API surface into three categories:
+
+| Category | Requirement | Example |
+|---|---|---|
+| **Mandatory** | Must be implemented by every compliant adapter | `sai_switch_api_t`, `sai_port_api_t`, `sai_route_api_t` |
+| **Optional** | Defined in the spec; may be absent | `sai_mirror_api_t`, `sai_tunnel_api_t` |
+| **Custom** | Vendor-specific extensions; not in the spec | Vendor-defined attribute ranges |
+
+The adapter host fails to start if a mandatory API is absent from the adapter. Absence of an optional API is handled gracefully by the control stack.
+
+<CardGroup cols={2}>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Key definitions and design goals behind SAI.
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Load an adapter and make your first SAI API calls.
+  </Card>
+</CardGroup>

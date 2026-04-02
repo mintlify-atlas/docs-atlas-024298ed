@@ -1,0 +1,207 @@
+---
+title: "Next Hop API"
+description: "Create and manage next hop objects and ECMP next hop groups using sai_next_hop_api_t and sai_next_hop_group_api_t."
+---
+
+The Next Hop API defines the forwarding targets that route entries reference. A next hop encapsulates the information needed to reach the next layer-3 device: an IP address, a router interface, and optionally tunnel or MPLS label information. Multiple next hops can be grouped together to form an ECMP (Equal-Cost Multi-Path) group.
+
+## Next hop types
+
+The `sai_next_hop_type_t` enum selects the forwarding mechanism:
+
+| Type | Description |
+|---|---|
+| `SAI_NEXT_HOP_TYPE_IP` | Standard IP next hop — resolves to a neighbor and a router interface |
+| `SAI_NEXT_HOP_TYPE_MPLS` | MPLS outsegment — pushes a label stack on the packet |
+| `SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP` | Tunnel encapsulation — wraps the packet before forwarding (e.g., VXLAN, GRE) |
+| `SAI_NEXT_HOP_TYPE_SRV6_SIDLIST` | SRv6 SID list — encapsulates the packet with a Segment Routing header |
+| `SAI_NEXT_HOP_TYPE_IPMC` | IP multicast next hop |
+| `SAI_NEXT_HOP_TYPE_BRIDGE_PORT` | Bridge port next hop |
+
+## Next hop attributes
+
+### `SAI_NEXT_HOP_ATTR_TYPE`
+
+<ParamField path="SAI_NEXT_HOP_ATTR_TYPE" type="sai_next_hop_type_t">
+  Selects the next hop type. Mandatory on create; cannot be changed after creation.
+</ParamField>
+
+### `SAI_NEXT_HOP_ATTR_IP`
+
+<ParamField path="SAI_NEXT_HOP_ATTR_IP" type="sai_ip_address_t">
+  The IP address of the adjacent router. Required for `IP`, `MPLS`, `TUNNEL_ENCAP`, `IPMC`, and `BRIDGE_PORT` types. The neighbor entry for this IP address must be programmed separately using the Neighbor API. IP addresses must be in network byte order.
+</ParamField>
+
+### `SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID`
+
+<ParamField path="SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID" type="sai_object_id_t">
+  The egress router interface (`SAI_OBJECT_TYPE_ROUTER_INTERFACE`). Required for `IP`, `MPLS`, and `IPMC` types. The router interface determines the source MAC address and outgoing VLAN or port.
+</ParamField>
+
+### `SAI_NEXT_HOP_ATTR_TUNNEL_ID`
+
+<ParamField path="SAI_NEXT_HOP_ATTR_TUNNEL_ID" type="sai_object_id_t">
+  The tunnel object (`SAI_OBJECT_TYPE_TUNNEL`) used for encapsulation. Required for `TUNNEL_ENCAP`, `SRV6_SIDLIST`, and `BRIDGE_PORT` types.
+</ParamField>
+
+### `SAI_NEXT_HOP_ATTR_TUNNEL_VNI`
+
+<ParamField path="SAI_NEXT_HOP_ATTR_TUNNEL_VNI" type="sai_uint32_t">
+  Overrides the VNI value from the tunnel mapper for `TUNNEL_ENCAP` next hops. Default is `0` (use tunnel mapper).
+</ParamField>
+
+### `SAI_NEXT_HOP_ATTR_LABELSTACK`
+
+<ParamField path="SAI_NEXT_HOP_ATTR_LABELSTACK" type="sai_u32_list_t">
+  MPLS label stack to push for `MPLS` type next hops. The first element in the list is the outermost label.
+</ParamField>
+
+### `SAI_NEXT_HOP_ATTR_SRV6_SIDLIST_ID`
+
+<ParamField path="SAI_NEXT_HOP_ATTR_SRV6_SIDLIST_ID" type="sai_object_id_t">
+  References an `SAI_OBJECT_TYPE_SRV6_SIDLIST` object for SRv6 encapsulation. Required (may be null) for `SRV6_SIDLIST` type.
+</ParamField>
+
+### `SAI_NEXT_HOP_ATTR_COUNTER_ID`
+
+<ParamField path="SAI_NEXT_HOP_ATTR_COUNTER_ID" type="sai_object_id_t">
+  Attaches a counter to track packets and bytes forwarded through this next hop.
+</ParamField>
+
+### `SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL`
+
+<ParamField path="SAI_NEXT_HOP_ATTR_DISABLE_DECREMENT_TTL" type="bool">
+  When `true`, suppresses TTL decrement for packets forwarded through this next hop. Default is `false`.
+</ParamField>
+
+## API table: `sai_next_hop_api_t`
+
+Obtain a pointer via `sai_api_query(SAI_API_NEXT_HOP, ...)`.
+
+| Function | Description |
+|---|---|
+| `create_next_hop` | Allocate and program a next hop object |
+| `remove_next_hop` | Remove a next hop object |
+| `set_next_hop_attribute` | Update a mutable attribute on a next hop |
+| `get_next_hop_attribute` | Read one or more attributes from a next hop |
+| `create_next_hops` | Bulk-create multiple next hops |
+| `remove_next_hops` | Bulk-remove multiple next hops |
+| `set_next_hops_attribute` | Bulk-set one attribute per next hop |
+| `get_next_hops_attribute` | Bulk-get attributes across multiple next hops |
+
+## Next hop groups
+
+A next hop group aggregates multiple next hops for load-balanced or protected forwarding. Groups are managed via `sai_next_hop_group_api_t` (obtained from `sai_api_query(SAI_API_NEXT_HOP_GROUP, ...)`).
+
+### Group types (`sai_next_hop_group_type_t`)
+
+| Type | Description |
+|---|---|
+| `SAI_NEXT_HOP_GROUP_TYPE_ECMP` | ECMP with dynamic membership, unordered (alias for `DYNAMIC_UNORDERED_ECMP`) |
+| `SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP` | Standard ECMP — members selected by hash |
+| `SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP` | ECMP with members sorted by priority |
+| `SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP` | Fixed-size ECMP bucket array for consistent hashing |
+| `SAI_NEXT_HOP_GROUP_TYPE_PROTECTION` | Primary + backup next hop with automatic or manual switchover |
+| `SAI_NEXT_HOP_GROUP_TYPE_CLASS_BASED` | Member selected by forwarding class |
+
+### Key group attributes
+
+<ParamField path="SAI_NEXT_HOP_GROUP_ATTR_TYPE" type="sai_next_hop_group_type_t">
+  The group type. Mandatory on create; cannot be changed.
+</ParamField>
+
+<ParamField path="SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_COUNT" type="sai_uint32_t">
+  Read-only count of members currently in the group.
+</ParamField>
+
+<ParamField path="SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_LIST" type="sai_object_list_t">
+  Read-only list of `SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER` objects belonging to this group.
+</ParamField>
+
+<ParamField path="SAI_NEXT_HOP_GROUP_ATTR_SET_SWITCHOVER" type="bool">
+  For `PROTECTION` type groups: setting this to `true` triggers a manual switchover from primary to backup.
+</ParamField>
+
+### Adding members
+
+Each member is a separate object of type `SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER`. Create a member by calling `create_next_hop_group_member` with:
+
+- `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID` — the parent group
+- `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID` — the next hop to add
+- `SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT` — relative weight for weighted ECMP
+
+<Tip>
+  Members can be added and removed from ECMP groups while the group is in use by route entries. The hardware updates ECMP tables incrementally without traffic interruption on compliant adapters.
+</Tip>
+
+## Example: creating an IP next hop and an ECMP group
+
+```c
+#include <sai.h>
+
+sai_next_hop_api_t       *nh_api;
+sai_next_hop_group_api_t *nhg_api;
+
+sai_api_query(SAI_API_NEXT_HOP,       (void **)&nh_api);
+sai_api_query(SAI_API_NEXT_HOP_GROUP, (void **)&nhg_api);
+
+/* --- Create two IP next hops (one per uplink port) --- */
+
+sai_attribute_t nh1_attrs[3];
+nh1_attrs[0].id        = SAI_NEXT_HOP_ATTR_TYPE;
+nh1_attrs[0].value.s32 = SAI_NEXT_HOP_TYPE_IP;
+nh1_attrs[1].id        = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
+nh1_attrs[1].value.oid = rif1_id;
+nh1_attrs[2].id        = SAI_NEXT_HOP_ATTR_IP;
+/* fill nh1_attrs[2].value.ipaddr with 192.0.2.1 */
+
+sai_object_id_t nh1_id, nh2_id;
+nh_api->create_next_hop(&nh1_id, switch_id, 3, nh1_attrs);
+
+sai_attribute_t nh2_attrs[3];
+nh2_attrs[0].id        = SAI_NEXT_HOP_ATTR_TYPE;
+nh2_attrs[0].value.s32 = SAI_NEXT_HOP_TYPE_IP;
+nh2_attrs[1].id        = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
+nh2_attrs[1].value.oid = rif2_id;
+nh2_attrs[2].id        = SAI_NEXT_HOP_ATTR_IP;
+/* fill nh2_attrs[2].value.ipaddr with 192.0.2.2 */
+
+nh_api->create_next_hop(&nh2_id, switch_id, 3, nh2_attrs);
+
+/* --- Create an ECMP group --- */
+
+sai_object_id_t ecmp_group_id;
+sai_attribute_t grp_attr;
+grp_attr.id        = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+grp_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+
+nhg_api->create_next_hop_group(&ecmp_group_id, switch_id, 1, &grp_attr);
+
+/* --- Add both next hops as members with equal weight --- */
+
+sai_object_id_t member1_id, member2_id;
+
+sai_attribute_t mbr_attrs[3];
+mbr_attrs[0].id        = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+mbr_attrs[0].value.oid = ecmp_group_id;
+mbr_attrs[1].id        = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+mbr_attrs[1].value.oid = nh1_id;
+mbr_attrs[2].id        = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+mbr_attrs[2].value.u32 = 1;
+nhg_api->create_next_hop_group_member(&member1_id, switch_id, 3, mbr_attrs);
+
+mbr_attrs[1].value.oid = nh2_id;
+nhg_api->create_next_hop_group_member(&member2_id, switch_id, 3, mbr_attrs);
+
+/* ecmp_group_id can now be set as SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID */
+```
+
+<Warning>
+  Do not delete a next hop group while route entries still reference it. Remove all referencing route entries first, then remove the group members, and finally remove the group itself.
+</Warning>
+
+## Related APIs
+
+- [Route API](/api/route) — attach next hops and groups to route entries
+- [FDB API](/api/fdb) — Layer 2 forwarding using bridge ports
+- [VLAN API](/api/vlan) — configure the bridge ports that router interfaces use

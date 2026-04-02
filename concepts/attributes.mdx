@@ -1,0 +1,188 @@
+---
+title: "Attributes"
+description: "The attribute system that SAI uses to configure and query every property of every object."
+---
+
+SAI is an **attribute-based API**. Instead of encoding configuration into fixed C structs that change with every API version, all object properties — administrative state, speed, IP addresses, referenced OIDs, counters — are expressed as a flat list of `(id, value)` pairs. This design makes the API naturally extensible and keeps it backward-compatible: callers only pass the attributes they care about, and adapters only parse the ones they recognise.
+
+## The `sai_attribute_t` struct
+
+Every attribute is represented by `sai_attribute_t`, declared in `saitypes.h`:
+
+```c
+typedef struct _sai_attribute_t
+{
+    sai_attr_id_t       id;     /* which attribute */
+    sai_attribute_value_t value; /* its value       */
+} sai_attribute_t;
+```
+
+`sai_attr_id_t` is a `uint32_t`. The valid IDs for a given object type are declared in that module's header (for example, `SAI_PORT_ATTR_*` values in `saiport.h`).
+
+## The `sai_attribute_value_t` union
+
+`sai_attribute_value_t` is a discriminated union that covers every value type SAI uses. You choose the correct union member based on what the attribute's metadata says its type is. All members are defined in `saitypes.h`:
+
+| Member | Type | Use for |
+|---|---|---|
+| `booldata` | `bool` | Boolean flags |
+| `u8` / `s8` | `sai_uint8_t` / `sai_int8_t` | 8-bit integers |
+| `u16` / `s16` | `sai_uint16_t` / `sai_int16_t` | 16-bit integers |
+| `u32` / `s32` | `sai_uint32_t` / `sai_int32_t` | 32-bit integers, enum values |
+| `u64` / `s64` | `sai_uint64_t` / `sai_int64_t` | 64-bit integers, counters |
+| `ptr` | `sai_pointer_t` | Callback function pointers |
+| `chardata` | `char[32]` | Short fixed-width strings |
+| `mac` | `sai_mac_t` (`uint8_t[6]`) | MAC addresses (network byte order) |
+| `ip4` | `sai_ip4_t` (`uint32_t`) | IPv4 addresses (network byte order) |
+| `ip6` | `sai_ip6_t` (`uint8_t[16]`) | IPv6 addresses (network byte order) |
+| `ipaddr` | `sai_ip_address_t` | AF-agnostic IP address |
+| `ipprefix` | `sai_ip_prefix_t` | IP prefix (address + mask) |
+| `oid` | `sai_object_id_t` | Reference to another SAI object |
+| `objlist` | `sai_object_list_t` | List of OID references |
+| `u8list` / `s8list` | `sai_u8_list_t` / `sai_s8_list_t` | Byte arrays |
+| `u32list` / `s32list` | `sai_u32_list_t` / `sai_s32_list_t` | Integer lists, enum lists |
+| `u32range` / `s32range` | `sai_u32_range_t` / `sai_s32_range_t` | Integer ranges |
+| `vlanlist` | `sai_vlan_list_t` | List of VLAN IDs |
+| `qosmap` | `sai_qos_map_list_t` | QoS mapping table |
+| `aclfield` | `sai_acl_field_data_t` | ACL match field with mask |
+| `aclaction` | `sai_acl_action_data_t` | ACL action with parameter |
+| `json` | `sai_json_t` | JSON-encoded attribute data |
+| `timespec` | `sai_timespec_t` | Timestamp (seconds + nanoseconds) |
+| `encrypt_key` | `sai_encrypt_key_t` (`uint8_t[32]`) | 256-bit encryption key |
+| `macsecsak` | `sai_macsec_sak_t` (`uint8_t[32]`) | MACsec Secure Association Key |
+| `sysportconfig` | `sai_system_port_config_t` | System port configuration struct |
+
+## Attribute flags
+
+Every attribute has associated flags (`sai_attr_flags_t`) declared in `saimetadatatypes.h` that govern when it may be read or written:
+
+| Flag | Bit | Meaning |
+|---|---|---|
+| `SAI_ATTR_FLAGS_MANDATORY_ON_CREATE` | `(1 << 0)` | Must be supplied in the `create_*` call or the call fails. |
+| `SAI_ATTR_FLAGS_CREATE_ONLY` | `(1 << 1)` | Set at creation time only; cannot be modified afterwards with `set_*`. |
+| `SAI_ATTR_FLAGS_CREATE_AND_SET` | `(1 << 2)` | Can be supplied at creation and changed at any time with `set_*`. |
+| `SAI_ATTR_FLAGS_READ_ONLY` | `(1 << 3)` | Can only be read with `get_*`. Hardware-derived values like link state and counters use this flag. |
+| `SAI_ATTR_FLAGS_KEY` | `(1 << 4)` | Part of the object's identity key. Two objects with the same key cannot coexist (e.g., VLAN ID). Must be combined with `MANDATORY_ON_CREATE` and `CREATE_ONLY`. |
+| `SAI_ATTR_FLAGS_DYNAMIC` | `(1 << 5)` | Value may change autonomously (e.g., port operational status, counter readings). Often combined with `READ_ONLY`. |
+
+Passing a `READ_ONLY` attribute to a `set_*` call returns `SAI_STATUS_INVALID_ATTRIBUTE_0` (offset from the base indicates which attribute in the list was invalid). Passing a `CREATE_ONLY` attribute to a `set_*` call after creation returns the same error.
+
+<Warning>
+Always check attribute flags in the module header comments before deciding whether to include an attribute in a create or set call. Violating flag constraints returns an error at runtime but is not caught at compile time.
+</Warning>
+
+## Building an attribute list
+
+Most `create_*` calls accept an array of `sai_attribute_t` structs and a count:
+
+```c
+#include <sai.h>
+
+/* Create a next hop pointing to 192.0.2.1 via router interface rif_id */
+sai_attribute_t nh_attrs[3];
+
+nh_attrs[0].id        = SAI_NEXT_HOP_ATTR_TYPE;
+nh_attrs[0].value.s32 = SAI_NEXT_HOP_TYPE_IP;
+
+nh_attrs[1].id              = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
+nh_attrs[1].value.oid       = rif_id;
+
+/* IPv4 address in network byte order */
+nh_attrs[2].id              = SAI_NEXT_HOP_ATTR_IP;
+nh_attrs[2].value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+nh_attrs[2].value.ipaddr.addr.ip4   = htonl(0xC0000201); /* 192.0.2.1 */
+
+sai_object_id_t nh_id;
+sai_status_t status = nh_api->create_next_hop(
+    &nh_id,
+    switch_id,
+    3,
+    nh_attrs);
+
+if (status != SAI_STATUS_SUCCESS) {
+    /* Check SAI_STATUS_IS_INVALID_ATTRIBUTE(status) to find which
+       attribute caused the failure */
+}
+```
+
+<Note>
+Enum-typed attributes use the `s32` member. SAI conventions treat all `int32_t` values whose metadata marks them as enum values as such, even though the union member is not named `enum`.
+</Note>
+
+## Getting attributes
+
+To read attributes, allocate `sai_attribute_t` entries with the desired IDs and call the module's `get_*` function. For list-valued attributes you must also pre-allocate the backing buffer and set the `count` field:
+
+```c
+/* Read the current MTU of a router interface */
+sai_attribute_t get_attr;
+get_attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+
+status = rif_api->get_router_interface_attribute(rif_id, 1, &get_attr);
+uint32_t mtu = get_attr.value.u32;
+
+/* Read the port list from a LAG (list-valued attribute) */
+sai_object_id_t port_buf[32];
+sai_attribute_t list_attr;
+list_attr.id                    = SAI_LAG_ATTR_PORT_LIST;
+list_attr.value.objlist.count   = 32;  /* capacity of our buffer */
+list_attr.value.objlist.list    = port_buf;
+
+status = lag_api->get_lag_attribute(lag_id, 1, &list_attr);
+if (status == SAI_STATUS_BUFFER_OVERFLOW) {
+    /* list_attr.value.objlist.count was updated with the required size.
+       Re-allocate and retry. */
+}
+/* On success, list_attr.value.objlist.count is the actual number of ports */
+```
+
+## Setting a single attribute
+
+`set_*` functions take exactly one attribute at a time:
+
+```c
+sai_attribute_t set_attr;
+set_attr.id             = SAI_PORT_ATTR_ADMIN_STATE;
+set_attr.value.booldata = true;
+
+status = port_api->set_port_attribute(port_id, &set_attr);
+```
+
+<Tip>
+Only `CREATE_AND_SET` attributes can be modified after object creation. Attempting to set a `CREATE_ONLY` attribute returns `SAI_STATUS_INVALID_ATTRIBUTE_0`.
+</Tip>
+
+## Attribute error status codes
+
+When a `create_*` call fails due to an attribute problem, the return value encodes which attribute caused the error:
+
+| Status range | Meaning |
+|---|---|
+| `SAI_STATUS_INVALID_ATTRIBUTE_0` + offset | The attribute at `attr_list[offset]` is not valid for this call (e.g., passing a READ_ONLY attr to create). |
+| `SAI_STATUS_INVALID_ATTR_VALUE_0` + offset | The value supplied for that attribute is out of range or refers to a non-existent OID. |
+| `SAI_STATUS_ATTR_NOT_IMPLEMENTED_0` + offset | The attribute is defined but not implemented by this adapter. |
+| `SAI_STATUS_ATTR_NOT_SUPPORTED_0` + offset | The platform lacks hardware support for this attribute. |
+
+Use the helper macros from `saistatus.h` to classify the error:
+
+```c
+if (SAI_STATUS_IS_INVALID_ATTRIBUTE(status)) {
+    int offset = status - SAI_STATUS_INVALID_ATTRIBUTE_0;
+    printf("Attribute at index %d is invalid\n", offset);
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="Object model" icon="cubes" href="/concepts/object-model">
+    How objects are identified and managed with OIDs.
+  </Card>
+  <Card title="Extensions" icon="flask" href="/concepts/extensions">
+    Adding custom attributes beyond the standard range.
+  </Card>
+  <Card title="API overview" icon="code" href="/api/overview">
+    Module-by-module reference for all SAI APIs.
+  </Card>
+  <Card title="Switch initialization" icon="power-off" href="/guides/switch-initialization">
+    Complete attribute list for creating the switch object.
+  </Card>
+</CardGroup>

@@ -1,0 +1,263 @@
+---
+title: "MACsec API"
+description: "API for IEEE 802.1AE Media Access Control Security: configuring encryption, authentication, and secure channels on Ethernet ports."
+---
+
+The SAI MACsec API (`sai_macsec_api_t`) implements IEEE 802.1AE MACsec, which provides hop-by-hop encryption and authentication at Layer 2. MACsec secures traffic between directly connected devices on the same Ethernet link.
+
+<Note>
+  MACsec is an optional capability. Before configuring MACsec objects, check `SAI_SWITCH_ATTR_MACSEC_OBJECT_LIST` and `SAI_MACSEC_ATTR_SUPPORTED_PORT_LIST` to verify that MACsec is supported and to identify which ports are MACsec-capable. Attempting to configure MACsec on an unsupported platform or port will return an error.
+</Note>
+
+## Object hierarchy
+
+MACsec uses a five-level object hierarchy. Each level must be configured before the level below it.
+
+```
+sai_macsec (global engine, one per direction)
+    └── sai_macsec_port (per physical port)
+            └── sai_macsec_flow (traffic classification via ACL)
+                    └── sai_macsec_sc (Secure Channel, identified by SCI)
+                            └── sai_macsec_sa (Secure Association, holds the key)
+```
+
+| Object type | Description |
+|---|---|
+| `SAI_OBJECT_TYPE_MACSEC` | Global MACsec engine instance, one per direction (ingress/egress) |
+| `SAI_OBJECT_TYPE_MACSEC_PORT` | Enables MACsec on a specific physical port |
+| `SAI_OBJECT_TYPE_MACSEC_FLOW` | Groups traffic for a set of secure channels; associated with an ACL |
+| `SAI_OBJECT_TYPE_MACSEC_SC` | Secure Channel — identified by its SCI (MAC + port ID) |
+| `SAI_OBJECT_TYPE_MACSEC_SA` | Secure Association — holds the SAK (encryption key) and AN |
+
+## Direction
+
+Each MACsec object is created for a specific direction:
+
+| Value | Description |
+|---|---|
+| `SAI_MACSEC_DIRECTION_EGRESS` | System-to-line direction (encrypting outbound traffic) |
+| `SAI_MACSEC_DIRECTION_INGRESS` | Line-to-system direction (decrypting inbound traffic) |
+
+You must create separate object hierarchies for ingress and egress.
+
+## Cipher suites (`sai_macsec_cipher_suite_t`)
+
+| Value | Key length | Extended PN | Description |
+|---|---|---|---|
+| `SAI_MACSEC_CIPHER_SUITE_GCM_AES_128` | 128-bit | No | Standard AES-GCM-128 |
+| `SAI_MACSEC_CIPHER_SUITE_GCM_AES_256` | 256-bit | No | Standard AES-GCM-256 |
+| `SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_128` | 128-bit | Yes | AES-GCM-128 with 64-bit extended packet number |
+| `SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_256` | 256-bit | Yes | AES-GCM-256 with 64-bit extended packet number |
+
+Use XPN cipher suites on high-speed links where the 32-bit packet number could roll over within the lifetime of a key.
+
+Query `SAI_MACSEC_ATTR_SUPPORTED_CIPHER_SUITE_LIST` to determine which suites your hardware supports.
+
+## MACsec global attributes (`sai_macsec_attr_t`)
+
+<ParamField path="SAI_MACSEC_ATTR_DIRECTION" type="sai_macsec_direction_t">
+  Direction of this MACsec engine instance. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_ATTR_SUPPORTED_CIPHER_SUITE_LIST" type="sai_s32_list_t">
+  Read-only. List of cipher suites supported by this engine.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_ATTR_SUPPORTED_PORT_LIST" type="sai_object_list_t">
+  Read-only. List of ports that support MACsec.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_ATTR_PHYSICAL_BYPASS_ENABLE" type="bool">
+  When true, allows packets to physically bypass MACsec processing when no `macsec_port` object is associated with the port. Default: false.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_ATTR_STATS_MODE" type="sai_stats_mode_t">
+  Global read-clear or read-only mode for statistics. Default: `SAI_STATS_MODE_READ_AND_CLEAR`.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_ATTR_MAX_SECURE_ASSOCIATIONS_PER_SC" type="sai_macsec_max_secure_associations_per_sc_t">
+  Read-only. Whether the hardware supports 2 or 4 SAs per SC.
+</ParamField>
+
+## MACsec port attributes (`sai_macsec_port_attr_t`)
+
+<ParamField path="SAI_MACSEC_PORT_ATTR_MACSEC_DIRECTION" type="sai_macsec_direction_t">
+  Direction for this port. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_PORT_ATTR_PORT_ID" type="sai_object_id_t">
+  Physical port to enable MACsec on. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_PORT_ATTR_CTAG_ENABLE" type="bool">
+  Enable parsing of C-tag (802.1Q) VLAN tags before the MACsec header. Default: false.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_PORT_ATTR_STAG_ENABLE" type="bool">
+  Enable parsing of S-tag (802.1ad) VLAN tags before the MACsec header. Default: false.
+</ParamField>
+
+## Secure Channel attributes (`sai_macsec_sc_attr_t`)
+
+<ParamField path="SAI_MACSEC_SC_ATTR_MACSEC_DIRECTION" type="sai_macsec_direction_t">
+  Direction for this SC. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SC_ATTR_FLOW_ID" type="sai_object_id_t">
+  Parent flow object. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SC_ATTR_MACSEC_SCI" type="sai_uint64_t">
+  Secure Channel Identifier (MAC address in low bytes, port ID in high bytes). Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SC_ATTR_MACSEC_CIPHER_SUITE" type="sai_macsec_cipher_suite_t">
+  Cipher suite for this channel. Mandatory on create.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SC_ATTR_ENCRYPTION_ENABLE" type="bool">
+  When true, frames are encrypted. When false, frames are authenticated but not encrypted (integrity only). Default: true.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_ENABLE" type="bool">
+  Enable replay protection for ingress channels. Default: true. Valid for ingress only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW" type="sai_uint32_t">
+  Replay protection window size (number of packets). Default: 0. Valid for ingress only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SC_ATTR_MACSEC_EXPLICIT_SCI_ENABLE" type="bool">
+  When true, the SCI is explicitly included in the SecTAG. Default: false. Valid for egress only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SC_ATTR_ACTIVE_EGRESS_SA_ID" type="sai_object_id_t">
+  Read-only. The currently active egress SA for this channel.
+</ParamField>
+
+## Secure Association attributes (`sai_macsec_sa_attr_t`)
+
+The SA holds the cryptographic key material. All key attributes are write-only (create-only) for security.
+
+<ParamField path="SAI_MACSEC_SA_ATTR_MACSEC_DIRECTION" type="sai_macsec_direction_t">
+  Direction for this SA. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SA_ATTR_SC_ID" type="sai_object_id_t">
+  Parent Secure Channel object. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SA_ATTR_AN" type="sai_uint8_t">
+  Association Number (2-bit value: 0–3). Carried in the SecTAG and must be unique within the SC. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SA_ATTR_SAK" type="sai_macsec_sak_t">
+  Secure Association Key (128-bit or 256-bit depending on cipher suite). Network byte order. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SA_ATTR_AUTH_KEY" type="sai_macsec_auth_key_t">
+  Authentication key used for GCM authentication tag generation. Network byte order. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SA_ATTR_SALT" type="sai_macsec_salt_t">
+  Salt value used in XPN cipher suites for IV construction. Mandatory when using `GCM_AES_XPN_128` or `GCM_AES_XPN_256`. Create-only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SA_ATTR_CONFIGURED_EGRESS_XPN" type="sai_uint64_t">
+  Starting packet number for egress SAs. Default: 0. Valid for egress only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SA_ATTR_MINIMUM_INGRESS_XPN" type="sai_uint64_t">
+  Minimum acceptable packet number for replay protection. Default: 1. Valid for ingress only.
+</ParamField>
+
+<ParamField path="SAI_MACSEC_SA_ATTR_CURRENT_XPN" type="sai_uint64_t">
+  Read-only. Current packet number (largest received for ingress; next-minus-one for egress).
+</ParamField>
+
+## Functions
+
+```c
+/* MACsec engine */
+sai_status_t create_macsec(sai_object_id_t *macsec_id,
+                             sai_object_id_t switch_id,
+                             uint32_t attr_count,
+                             const sai_attribute_t *attr_list);
+sai_status_t remove_macsec(sai_object_id_t macsec_id);
+
+/* MACsec port */
+sai_status_t create_macsec_port(sai_object_id_t *macsec_port_id,
+                                  sai_object_id_t switch_id,
+                                  uint32_t attr_count,
+                                  const sai_attribute_t *attr_list);
+sai_status_t remove_macsec_port(sai_object_id_t macsec_port_id);
+
+/* MACsec flow */
+sai_status_t create_macsec_flow(sai_object_id_t *macsec_flow_id,
+                                  sai_object_id_t switch_id,
+                                  uint32_t attr_count,
+                                  const sai_attribute_t *attr_list);
+sai_status_t remove_macsec_flow(sai_object_id_t macsec_flow_id);
+
+/* Secure Channel */
+sai_status_t create_macsec_sc(sai_object_id_t *macsec_sc_id,
+                                sai_object_id_t switch_id,
+                                uint32_t attr_count,
+                                const sai_attribute_t *attr_list);
+sai_status_t remove_macsec_sc(sai_object_id_t macsec_sc_id);
+
+/* Secure Association */
+sai_status_t create_macsec_sa(sai_object_id_t *macsec_sa_id,
+                                sai_object_id_t switch_id,
+                                uint32_t attr_count,
+                                const sai_attribute_t *attr_list);
+sai_status_t remove_macsec_sa(sai_object_id_t macsec_sa_id);
+sai_status_t set_macsec_sa_attribute(sai_object_id_t macsec_sa_id,
+                                      const sai_attribute_t *attr);
+sai_status_t get_macsec_sa_attribute(sai_object_id_t macsec_sa_id,
+                                      uint32_t attr_count,
+                                      sai_attribute_t *attr_list);
+```
+
+## Example: configuring an egress Secure Association
+
+```c
+/* Preconditions: macsec engine, macsec_port, and macsec_flow already created */
+
+/* Step 1: Create a Secure Channel (egress) */
+sai_attribute_t sc_attrs[4];
+sc_attrs[0].id = SAI_MACSEC_SC_ATTR_MACSEC_DIRECTION;
+sc_attrs[0].value.s32 = SAI_MACSEC_DIRECTION_EGRESS;
+sc_attrs[1].id = SAI_MACSEC_SC_ATTR_FLOW_ID;
+sc_attrs[1].value.oid = flow_id;
+sc_attrs[2].id = SAI_MACSEC_SC_ATTR_MACSEC_SCI;
+sc_attrs[2].value.u64 = 0x001122334455AABBULL; /* SCI: MAC+port */
+sc_attrs[3].id = SAI_MACSEC_SC_ATTR_MACSEC_CIPHER_SUITE;
+sc_attrs[3].value.s32 = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
+
+sai_object_id_t sc_id;
+macsec_api->create_macsec_sc(&sc_id, switch_id, 4, sc_attrs);
+
+/* Step 2: Create a Secure Association with the session key */
+uint8_t sak_128[32] = { /* 128-bit key in bytes 16..31 */ };
+uint8_t auth_key[16] = { /* authentication key */ };
+
+sai_attribute_t sa_attrs[5];
+sa_attrs[0].id = SAI_MACSEC_SA_ATTR_MACSEC_DIRECTION;
+sa_attrs[0].value.s32 = SAI_MACSEC_DIRECTION_EGRESS;
+sa_attrs[1].id = SAI_MACSEC_SA_ATTR_SC_ID;
+sa_attrs[1].value.oid = sc_id;
+sa_attrs[2].id = SAI_MACSEC_SA_ATTR_AN;
+sa_attrs[2].value.u8 = 0;           /* AN = 0 */
+sa_attrs[3].id = SAI_MACSEC_SA_ATTR_SAK;
+memcpy(sa_attrs[3].value.macsecsak, sak_128, sizeof(sak_128));
+sa_attrs[4].id = SAI_MACSEC_SA_ATTR_AUTH_KEY;
+memcpy(sa_attrs[4].value.macsecauthkey, auth_key, sizeof(auth_key));
+
+sai_object_id_t sa_id;
+macsec_api->create_macsec_sa(&sa_id, switch_id, 5, sa_attrs);
+```
+
+<Warning>
+  Key material set in `SAI_MACSEC_SA_ATTR_SAK` and `SAI_MACSEC_SA_ATTR_AUTH_KEY` is write-only. Once an SA is created, these attributes cannot be read back. Rotate keys by creating a new SA with a different AN, then removing the old SA.
+</Warning>

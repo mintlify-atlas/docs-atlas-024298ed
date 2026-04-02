@@ -1,0 +1,215 @@
+---
+title: "FDB API"
+description: "Manage MAC address forwarding table entries and flush operations using sai_fdb_api_t."
+---
+
+The FDB (Forwarding Database) API manages the Layer 2 MAC address table. The switch uses this table to make forwarding decisions for Ethernet frames: when a frame arrives, the hardware looks up the destination MAC address in the FDB and forwards the frame to the corresponding bridge port. If no entry is found, the frame is flooded to all ports in the VLAN or bridge domain.
+
+## FDB entry structure
+
+Each entry is keyed by `sai_fdb_entry_t`:
+
+```c
+typedef struct _sai_fdb_entry_t {
+    sai_object_id_t switch_id;   /* Switch object ID */
+    sai_mac_t       mac_address; /* 6-byte MAC address */
+    sai_object_id_t bv_id;       /* Bridge or VLAN object ID */
+} sai_fdb_entry_t;
+```
+
+<ParamField path="switch_id" type="sai_object_id_t">
+  The switch object that owns this FDB entry.
+</ParamField>
+
+<ParamField path="mac_address" type="sai_mac_t">
+  The destination MAC address used as the lookup key.
+</ParamField>
+
+<ParamField path="bv_id" type="sai_object_id_t">
+  The bridge domain or VLAN context for the lookup. Accepts either a `SAI_OBJECT_TYPE_BRIDGE` (IEEE 802.1D) or a `SAI_OBJECT_TYPE_VLAN` (IEEE 802.1Q) object.
+</ParamField>
+
+## FDB entry types
+
+### `SAI_FDB_ENTRY_TYPE_DYNAMIC`
+
+Learned automatically by the switch hardware when a source MAC address is observed on a bridge port. Dynamic entries are subject to aging: after a configurable idle period, the hardware removes them and generates an `SAI_FDB_EVENT_AGED` notification.
+
+### `SAI_FDB_ENTRY_TYPE_STATIC`
+
+Programmed explicitly by the control plane. Static entries are never aged out. They are commonly used for:
+- Infrastructure MACs (uplinks, BFD peers)
+- Security policies (pinning a MAC to a specific port)
+- Multicast replication overrides
+
+<Note>
+  Static entries can optionally allow MAC move events. Set `SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE` to `true` to permit a static MAC to be re-learned on a different port. When set to `false` (default), MAC moves are suppressed and no trap is generated.
+</Note>
+
+## FDB entry attributes
+
+<ParamField path="SAI_FDB_ENTRY_ATTR_TYPE" type="sai_fdb_entry_type_t">
+  `DYNAMIC` or `STATIC`. Mandatory on create.
+</ParamField>
+
+<ParamField path="SAI_FDB_ENTRY_ATTR_PACKET_ACTION" type="sai_packet_action_t">
+  Disposition for packets matching this entry. Default is `SAI_PACKET_ACTION_FORWARD`. Common values: `FORWARD`, `DROP`, `TRAP`, `LOG`.
+</ParamField>
+
+<ParamField path="SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID" type="sai_object_id_t">
+  The egress bridge port (`SAI_OBJECT_TYPE_BRIDGE_PORT`) for forwarded packets. Only effective when the packet action is `FORWARD`, `COPY`, `LOG`, or `TRANSIT`. Set to `SAI_NULL_OBJECT_ID` to drop packets.
+</ParamField>
+
+<ParamField path="SAI_FDB_ENTRY_ATTR_USER_TRAP_ID" type="sai_object_id_t">
+  A user-defined trap (`SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP`) to use when the action is `TRAP` or `LOG`. Set to `SAI_NULL_OBJECT_ID` to use the default trap.
+</ParamField>
+
+<ParamField path="SAI_FDB_ENTRY_ATTR_META_DATA" type="sai_uint32_t">
+  User-defined tag that can be matched by ACL rules downstream.
+</ParamField>
+
+<ParamField path="SAI_FDB_ENTRY_ATTR_ENDPOINT_IP" type="sai_ip_address_t">
+  Tunnel endpoint IP for `SAI_BRIDGE_PORT_TYPE_TUNNEL` bridge ports (VXLAN remote VTEP).
+</ParamField>
+
+<ParamField path="SAI_FDB_ENTRY_ATTR_COUNTER_ID" type="sai_object_id_t">
+  Attaches a counter object to track hit statistics for this entry.
+</ParamField>
+
+<ParamField path="SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE" type="bool">
+  Valid only for static entries. When `true`, the hardware permits the MAC to be re-learned on a new port. Default is `false`.
+</ParamField>
+
+## API table: `sai_fdb_api_t`
+
+Obtain a pointer via `sai_api_query(SAI_API_FDB, ...)`.
+
+| Function | Description |
+|---|---|
+| `create_fdb_entry` | Install a single FDB entry |
+| `remove_fdb_entry` | Remove a single FDB entry |
+| `set_fdb_entry_attribute` | Update a mutable attribute on an existing entry |
+| `get_fdb_entry_attribute` | Read one or more attributes from an entry |
+| `flush_fdb_entries` | Bulk-flush entries matching a filter |
+| `create_fdb_entries` | Bulk-create multiple entries |
+| `remove_fdb_entries` | Bulk-remove multiple entries |
+| `set_fdb_entries_attribute` | Bulk-set one attribute per entry |
+| `get_fdb_entries_attribute` | Bulk-get attributes across multiple entries |
+
+## Flush operation
+
+`flush_fdb_entries` removes entries that match all supplied filter attributes simultaneously. Filters use AND logic — only entries matching every specified attribute are flushed.
+
+### Flush attributes (`sai_fdb_flush_attr_t`)
+
+<ParamField path="SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID" type="sai_object_id_t">
+  Limit the flush to entries associated with a specific bridge port.
+</ParamField>
+
+<ParamField path="SAI_FDB_FLUSH_ATTR_BV_ID" type="sai_object_id_t">
+  Limit the flush to entries in a specific bridge domain or VLAN.
+</ParamField>
+
+<ParamField path="SAI_FDB_FLUSH_ATTR_ENTRY_TYPE" type="sai_fdb_flush_entry_type_t">
+  Select which entry types to flush:
+  - `SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC` — dynamic entries only (default)
+  - `SAI_FDB_FLUSH_ENTRY_TYPE_STATIC` — static entries only
+  - `SAI_FDB_FLUSH_ENTRY_TYPE_ALL` — both static and dynamic entries
+</ParamField>
+
+### Common flush patterns
+
+```c
+/* Flush all dynamic entries (no attributes) */
+fdb_api->flush_fdb_entries(switch_id, 0, NULL);
+
+/* Flush dynamic entries on a specific bridge port */
+sai_attribute_t flush_attr;
+flush_attr.id        = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
+flush_attr.value.oid = bp_id;
+fdb_api->flush_fdb_entries(switch_id, 1, &flush_attr);
+
+/* Flush all entries (static + dynamic) in a VLAN */
+sai_attribute_t flush_attrs[2];
+flush_attrs[0].id        = SAI_FDB_FLUSH_ATTR_BV_ID;
+flush_attrs[0].value.oid = vlan_id;
+flush_attrs[1].id        = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+flush_attrs[1].value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_ALL;
+fdb_api->flush_fdb_entries(switch_id, 2, flush_attrs);
+```
+
+<Warning>
+  Flushing a large table can generate a burst of `SAI_FDB_EVENT_FLUSHED` notifications. Some adapters send a single consolidated notification (MAC address `00:00:00:00:00:00`, event type `FLUSHED`) rather than one notification per entry. Your notification handler must handle both forms.
+</Warning>
+
+## FDB event notifications
+
+The switch delivers FDB events asynchronously to a callback registered as `SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY`. Events are delivered as an array of `sai_fdb_event_notification_data_t` structures.
+
+| Event | Trigger |
+|---|---|
+| `SAI_FDB_EVENT_LEARNED` | Hardware observed a new source MAC and created a dynamic entry |
+| `SAI_FDB_EVENT_AGED` | A dynamic entry's age timer expired and the entry was removed |
+| `SAI_FDB_EVENT_MOVE` | The same MAC was observed on a different port; the entry was moved |
+| `SAI_FDB_EVENT_FLUSHED` | One or more entries were removed by a `flush_fdb_entries` call |
+
+```c
+void fdb_notification_handler(uint32_t count,
+                               const sai_fdb_event_notification_data_t *data)
+{
+    for (uint32_t i = 0; i < count; i++) {
+        switch (data[i].event_type) {
+        case SAI_FDB_EVENT_LEARNED:
+            /* add entry to software FDB, program VTEP if EVPN */
+            break;
+        case SAI_FDB_EVENT_AGED:
+            /* remove from software FDB */
+            break;
+        case SAI_FDB_EVENT_MOVE:
+            /* update port in software FDB */
+            break;
+        case SAI_FDB_EVENT_FLUSHED:
+            /* sync software FDB with hardware state */
+            break;
+        }
+    }
+}
+```
+
+## Example: creating a static FDB entry
+
+```c
+#include <sai.h>
+
+sai_fdb_api_t *fdb_api;
+sai_api_query(SAI_API_FDB, (void **)&fdb_api);
+
+/* Key: MAC 00:11:22:33:44:55 in VLAN 10 */
+sai_fdb_entry_t fdb_entry = {
+    .switch_id   = switch_id,
+    .mac_address = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55},
+    .bv_id       = vlan10_id   /* SAI_OBJECT_TYPE_VLAN object for VLAN 10 */
+};
+
+sai_attribute_t attrs[3];
+
+attrs[0].id        = SAI_FDB_ENTRY_ATTR_TYPE;
+attrs[0].value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
+
+attrs[1].id        = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
+attrs[1].value.s32 = SAI_PACKET_ACTION_FORWARD;
+
+attrs[2].id        = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
+attrs[2].value.oid = bridge_port_id;   /* egress bridge port */
+
+sai_status_t status = fdb_api->create_fdb_entry(&fdb_entry, 3, attrs);
+if (status != SAI_STATUS_SUCCESS) {
+    /* handle error */
+}
+```
+
+## Related APIs
+
+- [VLAN API](/api/vlan) — VLAN objects referenced by `bv_id`
+- [Route API](/api/route) — Layer 3 unicast forwarding
+- [ACL API](/api/acl) — override FDB forwarding decisions with ACL rules

@@ -1,0 +1,189 @@
+---
+title: "Route API"
+description: "Manage unicast route entries in a virtual router's forwarding table using sai_route_api_t."
+---
+
+The Route API programs IP forwarding entries in the hardware FIB (Forwarding Information Base). Each entry maps a destination IP prefix to a packet action and an optional next hop, enabling the switch to forward, drop, or trap packets at line rate.
+
+## Route entry structure
+
+A route is keyed by `sai_route_entry_t`, which identifies the exact forwarding lookup context:
+
+```c
+typedef struct _sai_route_entry_t {
+    sai_object_id_t switch_id;    /* Switch the route belongs to */
+    sai_object_id_t vr_id;        /* Virtual Router (VRF) object ID */
+    sai_ip_prefix_t destination;  /* IP prefix — IPv4 or IPv6, in network byte order */
+} sai_route_entry_t;
+```
+
+<ParamField path="switch_id" type="sai_object_id_t">
+  The switch object. Routes are scoped to a specific switch instance.
+</ParamField>
+
+<ParamField path="vr_id" type="sai_object_id_t">
+  The Virtual Router object (`SAI_OBJECT_TYPE_VIRTUAL_ROUTER`) that owns this route. Use separate VR objects to implement VRFs.
+</ParamField>
+
+<ParamField path="destination" type="sai_ip_prefix_t">
+  The destination IP prefix, including address and prefix length. Both IPv4 (`/32`) and IPv6 (`/128`) host routes and prefix routes are supported. All values must be in network byte order.
+</ParamField>
+
+<Note>
+  IP prefixes must be supplied in network byte order. The mask field must be consistent with the prefix length — any host bits set beyond the prefix length produce undefined behavior.
+</Note>
+
+## Route entry attributes
+
+### `SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION`
+
+<ParamField path="SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION" type="sai_packet_action_t">
+  Specifies what the switch does when a packet matches this route. Defaults to `SAI_PACKET_ACTION_FORWARD`. See [Packet actions](#packet-actions) below.
+</ParamField>
+
+### `SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID`
+
+<ParamField path="SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID" type="sai_object_id_t">
+  The forwarding target. Accepts:
+  - `SAI_OBJECT_TYPE_NEXT_HOP` — a single next hop (see [Next Hop API](/api/next-hop))
+  - `SAI_OBJECT_TYPE_NEXT_HOP_GROUP` — an ECMP group
+  - `SAI_OBJECT_TYPE_ROUTER_INTERFACE` — for directly connected subnets
+  - `SAI_OBJECT_TYPE_PORT` (CPU port) — for IP2ME routes (routes to the router's own address)
+
+  Set to `SAI_NULL_OBJECT_ID` to drop matched packets regardless of the packet action.
+  When the referenced next hop group is empty, the effective action is `DROP`.
+</ParamField>
+
+### `SAI_ROUTE_ENTRY_ATTR_META_DATA`
+
+<ParamField path="SAI_ROUTE_ENTRY_ATTR_META_DATA" type="sai_uint32_t">
+  User-defined metadata tag attached to the route. Can be matched by downstream ACL rules. Valid range is defined by `SAI_SWITCH_ATTR_ROUTE_DST_USER_META_DATA_RANGE`.
+</ParamField>
+
+### `SAI_ROUTE_ENTRY_ATTR_IP_ADDR_FAMILY` (read-only)
+
+<ParamField path="SAI_ROUTE_ENTRY_ATTR_IP_ADDR_FAMILY" type="sai_ip_addr_family_t">
+  Indicates whether the route is IPv4 or IPv6. Set automatically from the destination prefix; cannot be written by the caller.
+</ParamField>
+
+### `SAI_ROUTE_ENTRY_ATTR_COUNTER_ID`
+
+<ParamField path="SAI_ROUTE_ENTRY_ATTR_COUNTER_ID" type="sai_object_id_t">
+  Attaches a `SAI_OBJECT_TYPE_COUNTER` to count packets and bytes that hit this route. Set to `SAI_NULL_OBJECT_ID` to disable counting.
+</ParamField>
+
+## Packet actions
+
+The `sai_packet_action_t` enum controls per-packet disposition when a route matches:
+
+| Value | Behavior |
+|---|---|
+| `SAI_PACKET_ACTION_FORWARD` | Forward the packet using `NEXT_HOP_ID` (default) |
+| `SAI_PACKET_ACTION_DROP` | Silently discard the packet |
+| `SAI_PACKET_ACTION_TRAP` | Send the packet to the CPU; drop the original |
+| `SAI_PACKET_ACTION_LOG` | Send a copy to the CPU; continue forwarding |
+| `SAI_PACKET_ACTION_COPY` | Copy to CPU; original packet is dropped |
+| `SAI_PACKET_ACTION_TRANSIT` | Forward and copy to CPU (DTEL use case) |
+| `SAI_PACKET_ACTION_COPY_CANCEL` | Cancel a previously scheduled copy |
+| `SAI_PACKET_ACTION_DENY` | Drop and do not generate a copy |
+
+<Tip>
+  `NEXT_HOP_ID` is only consulted when the packet action is `FORWARD`, `COPY`, `LOG`, or `TRANSIT`. For `DROP` and `TRAP`, the next hop ID is ignored.
+</Tip>
+
+## API table: `sai_route_api_t`
+
+Obtain a pointer to this table by calling `sai_api_query(SAI_API_ROUTE, ...)`.
+
+| Function | Description |
+|---|---|
+| `create_route_entry` | Install a single route entry |
+| `remove_route_entry` | Remove a single route entry |
+| `set_route_entry_attribute` | Update one attribute on a route |
+| `get_route_entry_attribute` | Read one or more attributes from a route |
+| `create_route_entries` | Bulk-install multiple routes atomically |
+| `remove_route_entries` | Bulk-remove multiple routes |
+| `set_route_entries_attribute` | Bulk-set one attribute per route |
+| `get_route_entries_attribute` | Bulk-get attributes across multiple routes |
+
+Bulk functions accept a `sai_bulk_op_error_mode_t` parameter that controls whether the operation stops on the first error (`SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR`) or continues and records per-entry status (`SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR`).
+
+## Unicast vs. multicast routes
+
+The `sai_route_api_t` handles **unicast** routes only. Each entry has a single destination prefix and resolves to a single next hop or next hop group.
+
+**Multicast** forwarding uses a separate pipeline: `sai_ipmc_api_t` programs IPMC entries, and the VLAN and bridge APIs control replication lists. The route API is not involved in multicast lookups.
+
+## Example: creating IPv4 and IPv6 routes
+
+```c
+#include <sai.h>
+
+sai_route_api_t *route_api;
+sai_api_query(SAI_API_ROUTE, (void **)&route_api);
+
+/* --- IPv4 default route: 0.0.0.0/0 → next hop group (ECMP) --- */
+sai_route_entry_t v4_default = {
+    .switch_id   = switch_id,
+    .vr_id       = vr_id,
+    .destination = {
+        .addr_family = SAI_IP_ADDR_FAMILY_IPV4,
+        .addr.ip4    = 0x00000000,   /* 0.0.0.0 in host byte order shown; use htonl() */
+        .mask.ip4    = 0x00000000    /* /0 */
+    }
+};
+
+sai_attribute_t v4_attrs[2];
+v4_attrs[0].id        = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+v4_attrs[0].value.s32 = SAI_PACKET_ACTION_FORWARD;
+v4_attrs[1].id        = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+v4_attrs[1].value.oid = ecmp_group_id;
+
+sai_status_t status = route_api->create_route_entry(&v4_default, 2, v4_attrs);
+if (status != SAI_STATUS_SUCCESS) {
+    /* handle error */
+}
+
+/* --- IPv6 host route: 2001:db8::1/128 → single next hop --- */
+sai_route_entry_t v6_host = {
+    .switch_id   = switch_id,
+    .vr_id       = vr_id,
+    .destination = {
+        .addr_family = SAI_IP_ADDR_FAMILY_IPV6,
+        /* fill .addr.ip6 and .mask.ip6 with the 16-byte representations */
+    }
+};
+
+sai_attribute_t v6_attrs[2];
+v6_attrs[0].id        = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+v6_attrs[0].value.s32 = SAI_PACKET_ACTION_FORWARD;
+v6_attrs[1].id        = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+v6_attrs[1].value.oid = nh_id;
+
+route_api->create_route_entry(&v6_host, 2, v6_attrs);
+
+/* --- IP2ME route: trap packets destined to the router's own IP --- */
+sai_route_entry_t ip2me = {
+    .switch_id   = switch_id,
+    .vr_id       = vr_id,
+    .destination = { /* /32 host prefix for the router IP */ }
+};
+
+sai_attribute_t ip2me_attrs[2];
+ip2me_attrs[0].id        = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+ip2me_attrs[0].value.s32 = SAI_PACKET_ACTION_TRAP;
+ip2me_attrs[1].id        = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+ip2me_attrs[1].value.oid = cpu_port_id; /* SAI_SWITCH_ATTR_CPU_PORT */
+
+route_api->create_route_entry(&ip2me, 2, ip2me_attrs);
+```
+
+<Warning>
+  Routes must be removed before their referenced next hops or next hop groups are deleted. Removing a next hop that is still referenced by a route results in undefined hardware behavior on most adapters.
+</Warning>
+
+## Related APIs
+
+- [Next Hop API](/api/next-hop) — create individual next hops and ECMP groups
+- [FDB API](/api/fdb) — Layer 2 MAC forwarding entries
+- [ACL API](/api/acl) — match on route metadata and override forwarding actions

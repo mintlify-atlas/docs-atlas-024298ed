@@ -1,0 +1,187 @@
+---
+title: "Object Model"
+description: "How SAI represents every forwarding-plane entity as a typed, reference-counted 64-bit object identifier."
+---
+
+Every entity in SAI — a port, a route, an ACL table, a next hop — is represented as an **object**. Objects are created by the adapter, identified by an opaque 64-bit integer handle, and destroyed when they are no longer needed. The type system, lifecycle rules, and cross-object reference semantics described here apply uniformly across all SAI modules.
+
+## Object identifiers
+
+The fundamental handle type is `sai_object_id_t`, defined in `saitypes.h`:
+
+```c
+typedef uint64_t sai_object_id_t;
+
+#define SAI_NULL_OBJECT_ID 0L
+```
+
+Every `create_*` call returns a fresh `sai_object_id_t` to the caller. The adapter is free to encode whatever internal state it needs into the 64 bits — a common approach is to use the upper 16 bits for the object type and the lower 48 bits for the adapter's own index — but callers must treat the value as opaque.
+
+`SAI_NULL_OBJECT_ID` (zero) is the sentinel for "no object". Passing it where a valid OID is required will return `SAI_STATUS_INVALID_OBJECT_ID`.
+
+## Object type system
+
+Each OID belongs to exactly one object type, expressed as `sai_object_type_t`. The full enumeration is declared in `saitypes.h`; the table below lists the most commonly used types:
+
+| Value | Numeric | Description |
+|---|---|---|
+| `SAI_OBJECT_TYPE_NULL` | 0 | Invalid / unset |
+| `SAI_OBJECT_TYPE_PORT` | 1 | Physical or logical port |
+| `SAI_OBJECT_TYPE_LAG` | 2 | Link Aggregation Group |
+| `SAI_OBJECT_TYPE_VIRTUAL_ROUTER` | 3 | VRF / virtual router instance |
+| `SAI_OBJECT_TYPE_NEXT_HOP` | 4 | IP next hop |
+| `SAI_OBJECT_TYPE_NEXT_HOP_GROUP` | 5 | ECMP next hop group |
+| `SAI_OBJECT_TYPE_ROUTER_INTERFACE` | 6 | L3 router interface |
+| `SAI_OBJECT_TYPE_ACL_TABLE` | 7 | ACL match table |
+| `SAI_OBJECT_TYPE_ACL_ENTRY` | 8 | ACL rule within a table |
+| `SAI_OBJECT_TYPE_SWITCH` | 33 | Top-level switch object |
+| `SAI_OBJECT_TYPE_VLAN` | 38 | VLAN |
+| `SAI_OBJECT_TYPE_TUNNEL` | 42 | Tunnel endpoint |
+| `SAI_OBJECT_TYPE_BFD_SESSION` | 69 | BFD session |
+| `SAI_OBJECT_TYPE_MACSEC` | 88 | MACsec root object |
+| `SAI_OBJECT_TYPE_IPSEC` | 99 | IPsec root object |
+
+Extension and experimental object types occupy separate ranges:
+
+```c
+SAI_OBJECT_TYPE_CUSTOM_RANGE_BASE     = 0x10000000,
+SAI_OBJECT_TYPE_EXTENSIONS_RANGE_BASE = 0x20000000,
+```
+
+## Object lifecycle
+
+All SAI objects follow the same four-phase CRUD lifecycle.
+
+<Steps>
+  <Step title="Create">
+    Call the module's `create_*` function, passing mandatory attributes and a parent `switch_id`. The adapter allocates internal state and returns a new `sai_object_id_t`.
+
+    ```c
+    sai_object_id_t vr_id;
+    sai_attribute_t attr;
+    attr.id        = SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V4_STATE;
+    attr.value.booldata = true;
+
+    sai_status_t status = vr_api->create_virtual_router(
+        &vr_id,
+        switch_id,
+        1,       /* attr_count */
+        &attr);
+    ```
+  </Step>
+  <Step title="Get attributes">
+    Read one or more current attribute values by passing a pre-allocated `sai_attribute_t` array.
+
+    ```c
+    sai_attribute_t get_attr;
+    get_attr.id = SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V4_STATE;
+
+    status = vr_api->get_virtual_router_attribute(vr_id, 1, &get_attr);
+    /* get_attr.value.booldata now contains the current value */
+    ```
+  </Step>
+  <Step title="Set attributes">
+    Modify a mutable (`CREATE_AND_SET`) attribute at any time after creation.
+
+    ```c
+    sai_attribute_t set_attr;
+    set_attr.id             = SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V6_STATE;
+    set_attr.value.booldata = true;
+
+    status = vr_api->set_virtual_router_attribute(vr_id, &set_attr);
+    ```
+  </Step>
+  <Step title="Delete">
+    Remove the object. The adapter releases internal resources. Deletion fails with `SAI_STATUS_OBJECT_IN_USE` if any other object still references this OID.
+
+    ```c
+    status = vr_api->remove_virtual_router(vr_id);
+    ```
+  </Step>
+</Steps>
+
+<Note>
+If mandatory attributes are missing on create, the adapter returns `SAI_STATUS_MANDATORY_ATTRIBUTE_MISSING`. If it cannot choose a reasonable default, it returns failure rather than silently using a wrong value.
+</Note>
+
+## Object references
+
+Objects reference one another through OID-typed attributes. A router interface, for example, holds an OID attribute pointing to its parent virtual router; an ACL entry holds an OID pointing to its parent ACL table. These references are how SAI models the dependency graph of the forwarding plane.
+
+```c
+/* Create a virtual router first */
+sai_object_id_t vr_id;
+vr_api->create_virtual_router(&vr_id, switch_id, 0, NULL);
+
+/* Create a router interface that belongs to that VR */
+sai_attribute_t rif_attrs[3];
+
+rif_attrs[0].id         = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+rif_attrs[0].value.oid  = vr_id;           /* reference to the VR */
+
+rif_attrs[1].id         = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+rif_attrs[1].value.s32  = SAI_ROUTER_INTERFACE_TYPE_PORT;
+
+rif_attrs[2].id         = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
+rif_attrs[2].value.oid  = port_id;         /* reference to the port */
+
+sai_object_id_t rif_id;
+rif_api->create_router_interface(&rif_id, switch_id, 3, rif_attrs);
+```
+
+Attempting to remove `vr_id` while `rif_id` still references it will fail with `SAI_STATUS_OBJECT_IN_USE`. Always remove dependent objects before their parents.
+
+## Querying object type and switch membership
+
+Two global utility functions in `sai.h` let you inspect an OID without having the module's API table in hand:
+
+```c
+/* Returns the object type encoded in the OID, or SAI_OBJECT_TYPE_NULL
+   if the OID is not valid. */
+sai_object_type_t sai_object_type_query(sai_object_id_t object_id);
+
+/* Returns the switch OID that owns the given object, or
+   SAI_NULL_OBJECT_ID if the OID is invalid. */
+sai_object_id_t sai_switch_id_query(sai_object_id_t object_id);
+```
+
+These are useful in generic management layers that deal with heterogeneous OIDs, for example, reconciliation loops or serialization utilities.
+
+## Capacity planning with `sai_object_type_get_availability`
+
+Before creating many objects of the same type, query how many the adapter can still accommodate:
+
+```c
+uint64_t available = 0;
+
+sai_status_t status = sai_object_type_get_availability(
+    switch_id,
+    SAI_OBJECT_TYPE_NEXT_HOP,
+    0,       /* no discriminating attributes */
+    NULL,
+    &available);
+
+if (status == SAI_STATUS_NOT_SUPPORTED) {
+    /* This adapter does not track next-hop capacity */
+} else {
+    printf("Adapter can accept %llu more next hops\n",
+           (unsigned long long)available);
+}
+```
+
+Some object types support filtering by attributes to report capacity within a particular resource pool. Pass the discriminating attributes in `attr_list` when the adapter documentation specifies them. Returns `SAI_STATUS_NOT_SUPPORTED` for object types that do not implement resource accounting.
+
+<CardGroup cols={2}>
+  <Card title="Attributes" icon="sliders" href="/concepts/attributes">
+    How attribute IDs and values are structured and passed to SAI calls.
+  </Card>
+  <Card title="Adapter" icon="plug" href="/concepts/adapter">
+    How the adapter is loaded and how it implements the object lifecycle.
+  </Card>
+  <Card title="Extensions" icon="flask" href="/concepts/extensions">
+    Adding custom object types beyond the standard range.
+  </Card>
+  <Card title="Switch initialization" icon="power-off" href="/guides/switch-initialization">
+    Creating the root switch object that parents all others.
+  </Card>
+</CardGroup>

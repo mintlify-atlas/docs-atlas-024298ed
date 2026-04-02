@@ -1,0 +1,286 @@
+---
+title: "ACL API"
+description: "Program access control lists for packet classification, filtering, and remarking using sai_acl_api_t."
+---
+
+The ACL API provides a flexible, hardware-accelerated packet classification pipeline. You define match criteria and actions that apply to packets at specific pipeline stages. ACLs are organized in a hierarchy: tables define what fields to match; entries within a table supply concrete values and actions; groups aggregate multiple tables for combined or sequential evaluation.
+
+## Pipeline overview
+
+```
+Packet
+  │
+  ▼
+ACL Group (optional, groups multiple tables)
+  │
+  ├── ACL Table (stage: INGRESS or EGRESS; declares match fields)
+  │     ├── ACL Entry (priority N, match fields, actions)
+  │     └── ACL Entry (priority N-1, match fields, actions)
+  │
+  └── ACL Table (parallel or sequential lookup)
+        └── ACL Entry ...
+  │
+  ▼
+Forwarding / Drop / Trap / Remark
+```
+
+ACL tables are attached (bound) to ports, router interfaces, VLANs, or the switch object. The bind point determines which traffic the table sees.
+
+## ACL tables
+
+A table declares the set of header fields it will match on. Match field selection is made at table creation time and cannot be changed.
+
+### Key table attributes
+
+<ParamField path="SAI_ACL_TABLE_ATTR_ACL_STAGE" type="sai_acl_stage_t">
+  When in the pipeline the table is evaluated. `SAI_ACL_STAGE_INGRESS` processes packets as they arrive; `SAI_ACL_STAGE_EGRESS` processes packets just before they leave the switch. Mandatory on create.
+</ParamField>
+
+<ParamField path="SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST" type="sai_s32_list_t">
+  Declares which object types this table may be bound to: `SAI_ACL_BIND_POINT_TYPE_PORT`, `SAI_ACL_BIND_POINT_TYPE_VLAN`, `SAI_ACL_BIND_POINT_TYPE_ROUTER_INTERFACE`, `SAI_ACL_BIND_POINT_TYPE_SWITCH`, etc.
+</ParamField>
+
+<ParamField path="SAI_ACL_TABLE_ATTR_SIZE" type="sai_uint32_t">
+  Requested number of entries. The hardware may allocate more entries than requested (rounded up to the next TCAM block boundary). Query the actual allocated size after creation.
+</ParamField>
+
+<ParamField path="SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST" type="sai_s32_list_t">
+  The set of actions (`sai_acl_action_type_t`) that entries in this table may use. Required on some adapters; check `SAI_SWITCH_ATTR_ACL_STAGE_INGRESS` capabilities.
+</ParamField>
+
+### Match field attributes (set to `true` to enable)
+
+Match fields are boolean table attributes in the range `SAI_ACL_TABLE_ATTR_FIELD_START`. Enable each field you intend to match on in entries:
+
+| Attribute | Matches |
+|---|---|
+| `SAI_ACL_TABLE_ATTR_FIELD_SRC_IP` | IPv4 source address |
+| `SAI_ACL_TABLE_ATTR_FIELD_DST_IP` | IPv4 destination address |
+| `SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6` | IPv6 source address |
+| `SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6` | IPv6 destination address |
+| `SAI_ACL_TABLE_ATTR_FIELD_SRC_MAC` | Ethernet source MAC |
+| `SAI_ACL_TABLE_ATTR_FIELD_DST_MAC` | Ethernet destination MAC |
+| `SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL` | IP protocol number (TCP=6, UDP=17, etc.) |
+| `SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT` | TCP/UDP source port |
+| `SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT` | TCP/UDP destination port |
+| `SAI_ACL_TABLE_ATTR_FIELD_DSCP` | DSCP bits (6 bits of IP ToS/Traffic Class) |
+| `SAI_ACL_TABLE_ATTR_FIELD_ECN` | ECN bits |
+| `SAI_ACL_TABLE_ATTR_FIELD_TTL` | IP TTL / Hop Limit |
+| `SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS` | TCP control flags |
+| `SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE` | Ethertype |
+| `SAI_ACL_TABLE_ATTR_FIELD_IN_PORT` | Ingress port |
+| `SAI_ACL_TABLE_ATTR_FIELD_OUT_PORT` | Egress port |
+| `SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID` | Outer VLAN ID |
+| `SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE` | IP type (any, IPv4, IPv6, ARP, non-IP) |
+| `SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_FRAG` | IP fragmentation state |
+| `SAI_ACL_TABLE_ATTR_FIELD_ACL_USER_META` | User metadata carried from a previous ACL stage |
+
+<Tip>
+  Only enable the fields your entries actually use. Unused fields consume TCAM width and reduce the number of entries the hardware can store.
+</Tip>
+
+## ACL entries
+
+An entry is a rule within a table. It specifies values for the table's match fields, assigns a priority, and declares one or more actions.
+
+### Key entry attributes
+
+<ParamField path="SAI_ACL_ENTRY_ATTR_TABLE_ID" type="sai_object_id_t">
+  The parent ACL table. Mandatory on create.
+</ParamField>
+
+<ParamField path="SAI_ACL_ENTRY_ATTR_PRIORITY" type="sai_uint32_t">
+  Numeric priority. Higher values match first. Valid range is defined by `SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY` and `SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY`.
+</ParamField>
+
+<ParamField path="SAI_ACL_ENTRY_ATTR_ADMIN_STATE" type="bool">
+  Enables (`true`, default) or disables (`false`) entry matching without removing the entry.
+</ParamField>
+
+### Match field entry attributes
+
+Each field enabled in the table has a corresponding entry attribute. Match values use `sai_acl_field_data_t`, which pairs a data value with a mask (for ternary matching) or a range:
+
+```c
+sai_acl_field_data_t field;
+field.enable      = true;         /* must be true for the field to match */
+field.data.ip4    = dst_ip;       /* value to match */
+field.mask.ip4    = 0xFFFFFFFF;   /* exact match mask */
+```
+
+Common entry match field attributes:
+
+| Attribute | Matches |
+|---|---|
+| `SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP` | IPv4 source address with mask |
+| `SAI_ACL_ENTRY_ATTR_FIELD_DST_IP` | IPv4 destination address with mask |
+| `SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6` | IPv6 source address with mask |
+| `SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6` | IPv6 destination address with mask |
+| `SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL` | IP protocol byte |
+| `SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT` | Source port (or range) |
+| `SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT` | Destination port (or range) |
+| `SAI_ACL_ENTRY_ATTR_FIELD_DSCP` | DSCP value |
+| `SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS` | TCP flags |
+
+### Action entry attributes
+
+Actions use `sai_acl_action_data_t`:
+
+```c
+sai_acl_action_data_t action;
+action.enable      = true;
+action.parameter.s32 = SAI_PACKET_ACTION_DROP;
+```
+
+| Attribute | Effect |
+|---|---|
+| `SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION` | Forward, drop, trap, or log the packet |
+| `SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT` | Send the packet to a specific port, next hop, or next hop group |
+| `SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT_LIST` | Replicate the packet to a list of destinations |
+| `SAI_ACL_ENTRY_ATTR_ACTION_SET_TC` | Override the Traffic Class (internal priority queue) |
+| `SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP` | Rewrite the DSCP field in the IP header |
+| `SAI_ACL_ENTRY_ATTR_ACTION_SET_ECN` | Rewrite the ECN bits |
+| `SAI_ACL_ENTRY_ATTR_ACTION_SET_OUTER_VLAN_ID` | Rewrite the outer VLAN ID |
+| `SAI_ACL_ENTRY_ATTR_ACTION_SET_SRC_MAC` | Rewrite the source MAC address |
+| `SAI_ACL_ENTRY_ATTR_ACTION_SET_DST_MAC` | Rewrite the destination MAC address |
+| `SAI_ACL_ENTRY_ATTR_ACTION_COUNTER` | Attach a counter object to count matched packets |
+| `SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS` | Mirror matched ingress packets to a session |
+| `SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER` | Apply a policer (rate limiter) |
+| `SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA` | Tag the packet with metadata for the next ACL stage |
+| `SAI_ACL_ENTRY_ATTR_ACTION_SET_VRF` | Override the VRF used for routing this packet |
+| `SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT` | Exempt the packet from NAT translation |
+| `SAI_ACL_ENTRY_ATTR_ACTION_SET_DO_NOT_LEARN` | Suppress MAC learning for matched packets |
+
+## ACL groups
+
+A group (`SAI_OBJECT_TYPE_ACL_TABLE_GROUP`) bundles multiple tables together for joint evaluation. Groups are especially useful when hardware supports a fixed number of ACL bind points per stage.
+
+### Group types
+
+| Type | Behavior |
+|---|---|
+| `SAI_ACL_TABLE_GROUP_TYPE_SEQUENTIAL` | Tables are evaluated in priority order. The first matching entry wins. |
+| `SAI_ACL_TABLE_GROUP_TYPE_PARALLEL` | All tables are evaluated simultaneously. Non-conflicting actions are merged; conflicting actions are resolved by table priority. |
+
+### Group membership
+
+Each table is added to a group through an `SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER` object with:
+
+- `SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID` — the parent group
+- `SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID` — the table to add
+- `SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY` — evaluation order within the group
+
+## Attaching ACLs to ports
+
+Bind an ACL table or group to a port by setting the port's `SAI_PORT_ATTR_INGRESS_ACL` or `SAI_PORT_ATTR_EGRESS_ACL` attribute. The same attributes exist on router interfaces (`SAI_ROUTER_INTERFACE_ATTR_INGRESS_ACL`) and VLANs (`SAI_VLAN_ATTR_INGRESS_ACL`).
+
+```c
+sai_attribute_t port_acl_attr;
+port_acl_attr.id        = SAI_PORT_ATTR_INGRESS_ACL;
+port_acl_attr.value.oid = acl_table_id;   /* or acl_group_id */
+port_api->set_port_attribute(port_id, &port_acl_attr);
+```
+
+To detach, set the attribute to `SAI_NULL_OBJECT_ID`.
+
+## API table: `sai_acl_api_t`
+
+Obtain a pointer via `sai_api_query(SAI_API_ACL, ...)`.
+
+| Function | Description |
+|---|---|
+| `create_acl_table` | Allocate an ACL table with declared match fields |
+| `remove_acl_table` | Remove an ACL table and all its entries |
+| `set_acl_table_attribute` | Update a mutable table attribute |
+| `get_acl_table_attribute` | Read table attributes |
+| `create_acl_entry` | Add a rule to an ACL table |
+| `remove_acl_entry` | Remove a rule |
+| `set_acl_entry_attribute` | Update a rule's match field or action |
+| `get_acl_entry_attribute` | Read a rule's attributes |
+| `create_acl_counter` | Allocate a packet/byte counter |
+| `remove_acl_counter` | Remove a counter |
+| `get_acl_counter_attribute` | Read counter statistics |
+| `create_acl_table_group` | Create a group to hold multiple tables |
+| `remove_acl_table_group` | Remove a group |
+| `create_acl_table_group_member` | Add a table to a group |
+| `remove_acl_table_group_member` | Remove a table from a group |
+
+## Example: creating an ACL table and a drop rule
+
+```c
+#include <sai.h>
+
+sai_acl_api_t *acl_api;
+sai_api_query(SAI_API_ACL, (void **)&acl_api);
+
+/* --- Step 1: create an ingress ACL table matching on dst IP and IP protocol --- */
+sai_object_id_t acl_table_id;
+
+sai_attribute_t tbl_attrs[5];
+
+tbl_attrs[0].id        = SAI_ACL_TABLE_ATTR_ACL_STAGE;
+tbl_attrs[0].value.s32 = SAI_ACL_STAGE_INGRESS;
+
+/* Declare bind points */
+sai_int32_t bp_list[1] = { SAI_ACL_BIND_POINT_TYPE_PORT };
+tbl_attrs[1].id                     = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
+tbl_attrs[1].value.s32list.count    = 1;
+tbl_attrs[1].value.s32list.list     = bp_list;
+
+/* Enable dst IP match field */
+tbl_attrs[2].id         = SAI_ACL_TABLE_ATTR_FIELD_DST_IP;
+tbl_attrs[2].value.booldata = true;
+
+/* Enable IP protocol match field */
+tbl_attrs[3].id         = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
+tbl_attrs[3].value.booldata = true;
+
+/* Declare action types */
+sai_int32_t act_list[1] = { SAI_ACL_ACTION_TYPE_PACKET_ACTION };
+tbl_attrs[4].id                     = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
+tbl_attrs[4].value.s32list.count    = 1;
+tbl_attrs[4].value.s32list.list     = act_list;
+
+acl_api->create_acl_table(&acl_table_id, switch_id, 5, tbl_attrs);
+
+/* --- Step 2: add an entry that drops TCP traffic to 10.0.0.1/32 --- */
+sai_object_id_t acl_entry_id;
+
+sai_attribute_t ent_attrs[4];
+
+ent_attrs[0].id        = SAI_ACL_ENTRY_ATTR_TABLE_ID;
+ent_attrs[0].value.oid = acl_table_id;
+
+ent_attrs[1].id        = SAI_ACL_ENTRY_ATTR_PRIORITY;
+ent_attrs[1].value.u32 = 100;
+
+/* Match: dst IP = 10.0.0.1, exact */
+ent_attrs[2].id                          = SAI_ACL_ENTRY_ATTR_FIELD_DST_IP;
+ent_attrs[2].value.aclfield.enable       = true;
+ent_attrs[2].value.aclfield.data.ip4     = 0x0A000001;   /* 10.0.0.1 in host byte order */
+ent_attrs[2].value.aclfield.mask.ip4     = 0xFFFFFFFF;
+
+/* Action: drop */
+ent_attrs[3].id                              = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
+ent_attrs[3].value.aclaction.enable          = true;
+ent_attrs[3].value.aclaction.parameter.s32   = SAI_PACKET_ACTION_DROP;
+
+acl_api->create_acl_entry(&acl_entry_id, switch_id, 4, ent_attrs);
+
+/* --- Step 3: attach the table to port1 (ingress) --- */
+sai_attribute_t port_attr;
+port_attr.id        = SAI_PORT_ATTR_INGRESS_ACL;
+port_attr.value.oid = acl_table_id;
+port_api->set_port_attribute(port1_id, &port_attr);
+```
+
+<Warning>
+  Remove all ACL entries and unbind all ACL tables from their bind points before removing an ACL table. Attempting to remove a table that is still bound to a port or VLAN will fail.
+</Warning>
+
+## Related APIs
+
+- [Route API](/api/route) — use `SAI_ROUTE_ENTRY_ATTR_META_DATA` to tag packets for ACL matching
+- [VLAN API](/api/vlan) — bind ACLs to VLANs via `SAI_VLAN_ATTR_INGRESS_ACL`
+- [FDB API](/api/fdb) — ACL rules can override Layer 2 forwarding decisions
+- [Next Hop API](/api/next-hop) — ACL redirect actions reference next hop objects

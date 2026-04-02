@@ -1,0 +1,426 @@
+---
+title: "Port API"
+description: "Create and configure switch ports, read operational status, and collect per-port statistics via sai_port_api_t."
+---
+
+The Port API manages logical ports on a SAI switch. Retrieve it with `sai_api_query(SAI_API_PORT, ...)` after the switch object has been created.
+
+<Note>
+Ports are associated with a specific switch at creation time via the `switch_id` parameter. Query the existing port list from the switch using `SAI_SWITCH_ATTR_PORT_LIST` before creating additional ports.
+</Note>
+
+---
+
+## Method table (`sai_port_api_t`)
+
+```c
+typedef struct _sai_port_api_t {
+    sai_create_port_fn                     create_port;
+    sai_remove_port_fn                     remove_port;
+    sai_set_port_attribute_fn              set_port_attribute;
+    sai_get_port_attribute_fn              get_port_attribute;
+    sai_get_port_stats_fn                  get_port_stats;
+    sai_get_port_stats_ext_fn              get_port_stats_ext;
+    sai_clear_port_stats_fn                clear_port_stats;
+    sai_clear_port_all_stats_fn            clear_port_all_stats;
+    sai_create_port_pool_fn                create_port_pool;
+    sai_remove_port_pool_fn                remove_port_pool;
+    sai_set_port_pool_attribute_fn         set_port_pool_attribute;
+    sai_get_port_pool_attribute_fn         get_port_pool_attribute;
+    sai_get_port_pool_stats_fn             get_port_pool_stats;
+    sai_get_port_pool_stats_ext_fn         get_port_pool_stats_ext;
+    sai_clear_port_pool_stats_fn           clear_port_pool_stats;
+    sai_create_port_connector_fn           create_port_connector;
+    sai_remove_port_connector_fn           remove_port_connector;
+    sai_set_port_connector_attribute_fn    set_port_connector_attribute;
+    sai_get_port_connector_attribute_fn    get_port_connector_attribute;
+    sai_create_port_serdes_fn              create_port_serdes;
+    sai_remove_port_serdes_fn              remove_port_serdes;
+    sai_set_port_serdes_attribute_fn       set_port_serdes_attribute;
+    sai_get_port_serdes_attribute_fn       get_port_serdes_attribute;
+    /* bulk operations */
+    sai_bulk_object_create_fn              create_ports;
+    sai_bulk_object_remove_fn              remove_ports;
+    sai_bulk_object_set_attribute_fn       set_ports_attribute;
+    sai_bulk_object_get_attribute_fn       get_ports_attribute;
+    /* bulk serdes operations */
+    sai_bulk_object_create_fn              create_port_serdess;
+    sai_bulk_object_remove_fn              remove_port_serdess;
+    sai_bulk_object_set_attribute_fn       set_port_serdess_attribute;
+    sai_bulk_object_get_attribute_fn       get_port_serdess_attribute;
+    /* LLR profile operations */
+    sai_create_port_llr_profile_fn         create_port_llr_profile;
+    sai_remove_port_llr_profile_fn         remove_port_llr_profile;
+    sai_set_port_llr_profile_attribute_fn  set_port_llr_profile_attribute;
+    sai_get_port_llr_profile_attribute_fn  get_port_llr_profile_attribute;
+} sai_port_api_t;
+```
+
+---
+
+## `create_port`
+
+Creates a new logical port on the switch.
+
+```c
+sai_status_t (*sai_create_port_fn)(
+        _Out_ sai_object_id_t *port_id,
+        _In_  sai_object_id_t  switch_id,
+        _In_  uint32_t         attr_count,
+        _In_  const sai_attribute_t *attr_list);
+```
+
+<ParamField path="port_id" type="sai_object_id_t *">
+  Output. Receives the newly created port object ID.
+</ParamField>
+
+<ParamField path="switch_id" type="sai_object_id_t">
+  The switch object ID this port belongs to.
+</ParamField>
+
+<ParamField path="attr_count" type="uint32_t">
+  Number of attributes in `attr_list`.
+</ParamField>
+
+<ParamField path="attr_list" type="const sai_attribute_t *">
+  Array of attributes. `SAI_PORT_ATTR_HW_LANE_LIST` and `SAI_PORT_ATTR_SPEED` are mandatory.
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+## `remove_port`
+
+Removes a port and frees its hardware resources.
+
+```c
+sai_status_t (*sai_remove_port_fn)(
+        _In_ sai_object_id_t port_id);
+```
+
+<ParamField path="port_id" type="sai_object_id_t">
+  The port object ID to remove.
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+## `set_port_attribute` / `get_port_attribute`
+
+```c
+sai_status_t (*sai_set_port_attribute_fn)(
+        _In_ sai_object_id_t port_id,
+        _In_ const sai_attribute_t *attr);
+
+sai_status_t (*sai_get_port_attribute_fn)(
+        _In_    sai_object_id_t port_id,
+        _In_    uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list);
+```
+
+---
+
+## Key port attributes
+
+### Identity and physical mapping
+
+<ParamField path="SAI_PORT_ATTR_TYPE" type="sai_port_type_t">
+  **Read-only.**
+
+  The logical type of the port. Values:
+
+  | Enum | Description |
+  |------|-------------|
+  | `SAI_PORT_TYPE_LOGICAL` | Standard data-plane port (does not map 1:1 to a physical port). |
+  | `SAI_PORT_TYPE_CPU` | The CPU/control-plane port. |
+  | `SAI_PORT_TYPE_FABRIC` | A fabric interconnect port. |
+  | `SAI_PORT_TYPE_RECYCLE` | A recycle/loopback port. |
+</ParamField>
+
+<ParamField path="SAI_PORT_ATTR_HW_LANE_LIST" type="sai_u32_list_t">
+  **Mandatory on create. Create-only. Key attribute.**
+
+  Ordered list of hardware SerDes lane IDs assigned to this port. The lane IDs are hardware-platform specific. This is a key attribute: ports with different lane lists are distinct objects.
+</ParamField>
+
+### Speed and link
+
+<ParamField path="SAI_PORT_ATTR_SPEED" type="sai_uint32_t">
+  **Mandatory on create. Create and set.**
+
+  Configured port speed in Mbps (e.g., `10000`, `25000`, `40000`, `100000`, `400000`). On get, returns the configured value, not the negotiated speed. Use `SAI_PORT_ATTR_OPER_SPEED` (read-only) for the negotiated operational speed.
+</ParamField>
+
+<ParamField path="SAI_PORT_ATTR_FEC_MODE" type="sai_port_fec_mode_t">
+  **Create and set. Default: `SAI_PORT_FEC_MODE_NONE`.**
+
+  Forward Error Correction mode. Valid only when `SAI_PORT_ATTR_USE_EXTENDED_FEC` is `false`.
+
+  | Enum | Description |
+  |------|-------------|
+  | `SAI_PORT_FEC_MODE_NONE` | FEC disabled. |
+  | `SAI_PORT_FEC_MODE_RS` | RS-FEC (Reed-Solomon). Applies to 25G, 50G, 100G ports; specific variant is automatically selected. |
+  | `SAI_PORT_FEC_MODE_FC` | FC-FEC (Fire Code / BASE-R). Applies to 10G, 25G, 40G, 50G ports. |
+</ParamField>
+
+<ParamField path="SAI_PORT_ATTR_AUTO_NEG_MODE" type="bool">
+  **Create and set. Default: `false`.**
+
+  Enables IEEE auto-negotiation on the port.
+</ParamField>
+
+### Administrative control
+
+<ParamField path="SAI_PORT_ATTR_ADMIN_STATE" type="bool">
+  **Create and set. Default: `false`.**
+
+  Administrative state of the port. Set to `true` to bring the port up, `false` to shut it down. This is independent of the operational status (`SAI_PORT_ATTR_OPER_STATUS`).
+</ParamField>
+
+<ParamField path="SAI_PORT_ATTR_MTU" type="sai_uint32_t">
+  **Create and set. Default: `1514`.**
+
+  Maximum Transmission Unit in bytes, including the Ethernet header but excluding the FCS.
+</ParamField>
+
+### Operational status
+
+<ParamField path="SAI_PORT_ATTR_OPER_STATUS" type="sai_port_oper_status_t">
+  **Read-only.**
+
+  Current operational status of the port.
+
+  | Enum | Description |
+  |------|-------------|
+  | `SAI_PORT_OPER_STATUS_UNKNOWN` | Status cannot be determined. |
+  | `SAI_PORT_OPER_STATUS_UP` | Port link is up and passing traffic. |
+  | `SAI_PORT_OPER_STATUS_DOWN` | Port link is down. |
+  | `SAI_PORT_OPER_STATUS_TESTING` | Port is running a diagnostics test. |
+  | `SAI_PORT_OPER_STATUS_NOT_PRESENT` | Transceiver or cable not present. |
+</ParamField>
+
+### VLAN configuration
+
+<ParamField path="SAI_PORT_ATTR_PORT_VLAN_ID" type="sai_uint16_t">
+  **Create and set. Default: `1`.**
+
+  Port VLAN ID (PVID). Untagged ingress frames are internally tagged with this VLAN ID for switching and forwarding decisions.
+</ParamField>
+
+### ACL binding
+
+<ParamField path="SAI_PORT_ATTR_INGRESS_ACL" type="sai_object_id_t">
+  **Create and set. Default: `SAI_NULL_OBJECT_ID`.**
+
+  Binds an ACL table (`SAI_OBJECT_TYPE_ACL_TABLE`) or ACL table group (`SAI_OBJECT_TYPE_ACL_TABLE_GROUP`) to this port for ingress filtering. Set to `SAI_NULL_OBJECT_ID` to remove the binding.
+</ParamField>
+
+<ParamField path="SAI_PORT_ATTR_EGRESS_ACL" type="sai_object_id_t">
+  **Create and set. Default: `SAI_NULL_OBJECT_ID`.**
+
+  Binds an ACL table or ACL table group to this port for egress filtering. Set to `SAI_NULL_OBJECT_ID` to remove the binding.
+</ParamField>
+
+---
+
+## Statistics functions
+
+### `get_port_stats`
+
+Reads port counters. This is the standard (non-extended) form.
+
+```c
+sai_status_t (*sai_get_port_stats_fn)(
+        _In_  sai_object_id_t      port_id,
+        _In_  uint32_t             number_of_counters,
+        _In_  const sai_stat_id_t *counter_ids,
+        _Out_ uint64_t            *counters);
+```
+
+<ParamField path="port_id" type="sai_object_id_t">
+  The port object ID to query.
+</ParamField>
+
+<ParamField path="number_of_counters" type="uint32_t">
+  Number of counter IDs in `counter_ids`.
+</ParamField>
+
+<ParamField path="counter_ids" type="const sai_stat_id_t *">
+  Array of `sai_port_stat_t` counter identifiers to read.
+</ParamField>
+
+<ParamField path="counters" type="uint64_t *">
+  Caller-allocated output array of `number_of_counters` elements.
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+### `get_port_stats_ext`
+
+Extended form of `get_port_stats` that accepts a statistics read mode.
+
+```c
+sai_status_t (*sai_get_port_stats_ext_fn)(
+        _In_  sai_object_id_t      port_id,
+        _In_  uint32_t             number_of_counters,
+        _In_  const sai_stat_id_t *counter_ids,
+        _In_  sai_stats_mode_t     mode,
+        _Out_ uint64_t            *counters);
+```
+
+<ParamField path="mode" type="sai_stats_mode_t">
+  Statistics read mode. Common values: `SAI_STATS_MODE_READ` (read without clearing), `SAI_STATS_MODE_READ_AND_CLEAR` (atomic read-and-clear).
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+### `clear_port_stats`
+
+Clears a specific set of port counters.
+
+```c
+sai_status_t (*sai_clear_port_stats_fn)(
+        _In_ sai_object_id_t      port_id,
+        _In_ uint32_t             number_of_counters,
+        _In_ const sai_stat_id_t *counter_ids);
+```
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+### `clear_port_all_stats`
+
+Clears all counters for a port in a single call.
+
+```c
+sai_status_t (*sai_clear_port_all_stats_fn)(
+        _In_ sai_object_id_t port_id);
+```
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+## Port counter IDs (`sai_port_stat_t`)
+
+Selected counters from the `sai_port_stat_t` enum:
+
+| Counter ID | Description |
+|------------|-------------|
+| `SAI_PORT_STAT_IF_IN_OCTETS` | Total ingress bytes (octets). |
+| `SAI_PORT_STAT_IF_IN_UCAST_PKTS` | Ingress unicast packets. |
+| `SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS` | Ingress non-unicast (broadcast + multicast) packets. |
+| `SAI_PORT_STAT_IF_IN_DISCARDS` | Ingress packets discarded (e.g., buffer overflow). |
+| `SAI_PORT_STAT_IF_IN_ERRORS` | Ingress packets with errors. |
+| `SAI_PORT_STAT_IF_IN_UNKNOWN_PROTOS` | Ingress packets with unknown protocol. |
+| `SAI_PORT_STAT_IF_IN_BROADCAST_PKTS` | Ingress broadcast packets. |
+| `SAI_PORT_STAT_IF_IN_MULTICAST_PKTS` | Ingress multicast packets. |
+| `SAI_PORT_STAT_IF_IN_VLAN_DISCARDS` | Ingress packets discarded due to VLAN mismatch. |
+| `SAI_PORT_STAT_IF_OUT_OCTETS` | Total egress bytes. |
+| `SAI_PORT_STAT_IF_OUT_UCAST_PKTS` | Egress unicast packets. |
+| `SAI_PORT_STAT_IF_OUT_NON_UCAST_PKTS` | Egress non-unicast packets. |
+| `SAI_PORT_STAT_IF_OUT_DISCARDS` | Egress packets discarded. |
+| `SAI_PORT_STAT_IF_OUT_ERRORS` | Egress packets with errors. |
+| `SAI_PORT_STAT_IF_OUT_QLEN` | Current egress queue length. |
+| `SAI_PORT_STAT_IF_OUT_BROADCAST_PKTS` | Egress broadcast packets. |
+| `SAI_PORT_STAT_IF_OUT_MULTICAST_PKTS` | Egress multicast packets. |
+| `SAI_PORT_STAT_ETHER_STATS_DROP_EVENTS` | Number of drop events. |
+| `SAI_PORT_STAT_ETHER_STATS_PKTS_64_OCTETS` | Packets of exactly 64 bytes. |
+| `SAI_PORT_STAT_ETHER_STATS_PKTS_65_TO_127_OCTETS` | Packets 65–127 bytes. |
+| `SAI_PORT_STAT_ETHER_STATS_PKTS_128_TO_255_OCTETS` | Packets 128–255 bytes. |
+| `SAI_PORT_STAT_ETHER_STATS_PKTS_256_TO_511_OCTETS` | Packets 256–511 bytes. |
+| `SAI_PORT_STAT_ETHER_STATS_PKTS_512_TO_1023_OCTETS` | Packets 512–1023 bytes. |
+| `SAI_PORT_STAT_ETHER_STATS_PKTS_1024_TO_1518_OCTETS` | Packets 1024–1518 bytes. |
+| `SAI_PORT_STAT_ETHER_STATS_OVERSIZE_PKTS` | Oversized packets. |
+| `SAI_PORT_STAT_ETHER_STATS_UNDERSIZE_PKTS` | Undersized packets (runts). |
+| `SAI_PORT_STAT_ETHER_STATS_JABBERS` | Jabber frames. |
+| `SAI_PORT_STAT_ETHER_STATS_FRAGMENTS` | Fragment frames. |
+| `SAI_PORT_STAT_ETHER_STATS_OCTETS` | Total Ethernet octets (all sizes). |
+| `SAI_PORT_STAT_ETHER_STATS_PKTS` | Total Ethernet packets. |
+
+<Tip>
+The full `sai_port_stat_t` enum contains many additional counters including PFC, ECN, wred drop, and FEC-related statistics. Refer to `inc/saiport.h` lines 3094–4000 for the complete list.
+</Tip>
+
+---
+
+## Complete example
+
+```c
+#include <sai.h>
+#include <stdio.h>
+
+static sai_switch_api_t *switch_api = NULL;
+static sai_port_api_t   *port_api   = NULL;
+
+int enumerate_ports_and_read_admin_state(sai_object_id_t switch_id) {
+    /* Step 1: get the port count first */
+    sai_attribute_t attr;
+    sai_object_id_t port_list[256];
+
+    attr.id = SAI_SWITCH_ATTR_PORT_LIST;
+    attr.value.objlist.list  = port_list;
+    attr.value.objlist.count = 256;
+
+    sai_status_t status = switch_api->get_switch_attribute(switch_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS) {
+        fprintf(stderr, "get port list failed: %d\n", status);
+        return -1;
+    }
+
+    uint32_t port_count = attr.value.objlist.count;
+    printf("Found %u ports\n", port_count);
+
+    /* Step 2: for each port, read admin state and oper status */
+    for (uint32_t i = 0; i < port_count; i++) {
+        sai_object_id_t port_id = port_list[i];
+        sai_attribute_t port_attrs[2];
+
+        port_attrs[0].id = SAI_PORT_ATTR_ADMIN_STATE;
+        port_attrs[1].id = SAI_PORT_ATTR_OPER_STATUS;
+
+        status = port_api->get_port_attribute(port_id, 2, port_attrs);
+        if (status != SAI_STATUS_SUCCESS) continue;
+
+        printf("Port 0x%lx: admin=%s oper=%d\n",
+               (unsigned long)port_id,
+               port_attrs[0].value.booldata ? "up" : "down",
+               (int)port_attrs[1].value.s32);
+    }
+
+    /* Step 3: read ingress and egress byte counters for the first port */
+    if (port_count == 0) return 0;
+
+    sai_stat_id_t counter_ids[2] = {
+        SAI_PORT_STAT_IF_IN_OCTETS,
+        SAI_PORT_STAT_IF_OUT_OCTETS,
+    };
+    uint64_t counters[2] = {0};
+
+    status = port_api->get_port_stats(port_list[0], 2, counter_ids, counters);
+    if (status == SAI_STATUS_SUCCESS) {
+        printf("Port 0x%lx: rx_bytes=%" PRIu64 " tx_bytes=%" PRIu64 "\n",
+               (unsigned long)port_list[0], counters[0], counters[1]);
+    }
+
+    /* Step 4: enable a port by setting admin state */
+    sai_attribute_t admin_attr;
+    admin_attr.id = SAI_PORT_ATTR_ADMIN_STATE;
+    admin_attr.value.booldata = true;
+
+    status = port_api->set_port_attribute(port_list[0], &admin_attr);
+    if (status != SAI_STATUS_SUCCESS) {
+        fprintf(stderr, "set admin state failed: %d\n", status);
+        return -1;
+    }
+
+    return 0;
+}
+```

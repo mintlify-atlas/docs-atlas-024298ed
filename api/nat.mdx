@@ -1,0 +1,201 @@
+---
+title: "NAT API"
+description: "API for Network Address Translation: SNAT, DNAT, and double NAT entry management with support for IP address and L4 port rewriting."
+---
+
+The SAI NAT API (`sai_nat_api_t`) programs hardware NAT tables that translate IP addresses and Layer 4 ports in-flight. NAT entries are struct-based (like route and FDB entries) and are keyed by virtual router, NAT type, and packet header fields.
+
+## NAT types (`sai_nat_type_t`)
+
+| Value | Description |
+|---|---|
+| `SAI_NAT_TYPE_NONE` | No translation |
+| `SAI_NAT_TYPE_SOURCE_NAT` | SNAT — translate the source IP (and optionally source L4 port) |
+| `SAI_NAT_TYPE_DESTINATION_NAT` | DNAT — translate the destination IP (and optionally destination L4 port) |
+| `SAI_NAT_TYPE_DOUBLE_NAT` | Double NAT — translate both source and destination in one pass |
+| `SAI_NAT_TYPE_DESTINATION_NAT_POOL` | DNAT pool — used for one-to-many destination NAT |
+
+## NAT entry structure (`sai_nat_entry_t`)
+
+A NAT entry identifies which packets to match and carries the translation result in its attributes.
+
+```c
+typedef struct _sai_nat_entry_t {
+    sai_object_id_t  switch_id;   /* SAI_OBJECT_TYPE_SWITCH */
+    sai_object_id_t  vr_id;       /* Virtual router scope */
+    sai_nat_type_t   nat_type;    /* SNAT, DNAT, or double NAT */
+    sai_nat_entry_data_t data;    /* Key and mask */
+} sai_nat_entry_t;
+```
+
+The `data` field contains the match key and a mask:
+
+```c
+typedef struct _sai_nat_entry_key_t {
+    sai_ip4_t   src_ip;       /* Source IPv4 address */
+    sai_ip4_t   dst_ip;       /* Destination IPv4 address */
+    sai_uint8_t proto;        /* IP protocol (TCP=6, UDP=17, etc.) */
+    sai_uint16_t l4_src_port; /* Layer 4 source port */
+    sai_uint16_t l4_dst_port; /* Layer 4 destination port */
+} sai_nat_entry_key_t;
+```
+
+The driver uses only the key fields relevant to the NAT type. For DNAT, the match is on `dst_ip` and `l4_dst_port`; for SNAT, on `src_ip` and `l4_src_port`. Extra fields in the key are ignored.
+
+## NAT entry attributes (`sai_nat_entry_attr_t`)
+
+These attributes define the translated (rewritten) values and associated actions.
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_NAT_TYPE" type="sai_nat_type_t">
+  NAT operation to perform. Default: `SAI_NAT_TYPE_NONE`.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_SRC_IP" type="sai_ip4_t">
+  Translated source IPv4 address. Valid for SNAT and double NAT. Default: 0.0.0.0.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_SRC_IP_MASK" type="sai_ip4_t">
+  Mask for the translated source address. Valid for SNAT and double NAT. Default: 0.0.0.0.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_VR_ID" type="sai_object_id_t">
+  Virtual router to use after translation (for DNAT, this selects the destination routing domain). Valid for DNAT and double NAT. Default: `SAI_NULL_OBJECT_ID`.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_DST_IP" type="sai_ip4_t">
+  Translated destination IPv4 address. Valid for DNAT and double NAT. Default: 0.0.0.0.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_DST_IP_MASK" type="sai_ip4_t">
+  Mask for the translated destination address. Valid for DNAT and double NAT. Default: 0.0.0.0.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_L4_SRC_PORT" type="sai_uint16_t">
+  Translated Layer 4 source port. Default: 0.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_L4_DST_PORT" type="sai_uint16_t">
+  Translated Layer 4 destination port. Default: 0.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT" type="bool">
+  Enable per-entry packet counting. Default: false.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_PACKET_COUNT" type="sai_uint64_t">
+  Per-entry packet hit counter (readable and resettable). Default: 0.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT" type="bool">
+  Enable per-entry byte counting. Default: false.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_BYTE_COUNT" type="sai_uint64_t">
+  Per-entry byte hit counter (readable and resettable). Default: 0.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_HIT_BIT" type="bool">
+  Read/write. Whether the entry has been matched since the last read. Used for aging. Default: false.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_HIT_BIT_COR" type="bool">
+  When true, reading `SAI_NAT_ENTRY_ATTR_HIT_BIT` also clears it. Default: false.
+</ParamField>
+
+<ParamField path="SAI_NAT_ENTRY_ATTR_AGING_TIME" type="sai_uint32_t">
+  Entry aging time in seconds. 0 disables aging. When an entry ages out, a `SAI_NAT_EVENT_AGED` notification is sent. Default: 0.
+</ParamField>
+
+## Functions
+
+```c
+/* Single entry operations */
+sai_status_t create_nat_entry(const sai_nat_entry_t *nat_entry,
+                               uint32_t attr_count,
+                               const sai_attribute_t *attr_list);
+
+sai_status_t remove_nat_entry(const sai_nat_entry_t *nat_entry);
+
+sai_status_t set_nat_entry_attribute(const sai_nat_entry_t *nat_entry,
+                                      const sai_attribute_t *attr);
+
+sai_status_t get_nat_entry_attribute(const sai_nat_entry_t *nat_entry,
+                                      uint32_t attr_count,
+                                      sai_attribute_t *attr_list);
+
+/* Bulk operations */
+sai_status_t create_nat_entries(uint32_t object_count,
+                                 const sai_nat_entry_t *nat_entry,
+                                 const uint32_t *attr_count,
+                                 const sai_attribute_t **attr_list,
+                                 sai_bulk_op_error_mode_t mode,
+                                 sai_status_t *object_statuses);
+
+sai_status_t remove_nat_entries(uint32_t object_count,
+                                 const sai_nat_entry_t *nat_entry,
+                                 sai_bulk_op_error_mode_t mode,
+                                 sai_status_t *object_statuses);
+```
+
+## NAT aging notifications
+
+When `SAI_NAT_ENTRY_ATTR_AGING_TIME` is set, the switch fires a callback when an entry has not been matched for the configured duration. The callback is registered via `SAI_SWITCH_ATTR_NAT_EVENT_NOTIFY`.
+
+```c
+/* NAT event notification callback type */
+typedef void (*sai_nat_event_notification_fn)(
+    uint32_t count,
+    const sai_nat_event_notification_data_t *data);
+```
+
+Each notification carries the event type (`SAI_NAT_EVENT_AGED`) and the full `sai_nat_entry_t` identifying which entry aged out.
+
+## NAT zones on router interfaces
+
+NAT is triggered by zone boundaries. Each router interface carries a NAT zone ID:
+
+- **`SAI_ROUTER_INTERFACE_ATTR_NAT_ZONE_ID`** — assigns a zone number to the interface.
+
+When a packet crosses from one zone to another (e.g., zone 0 → zone 1), the switch looks up a matching NAT entry based on the packet's key fields and the direction of travel.
+
+## Example: DNAT entry (translate public IP to internal server)
+
+```c
+/* Translate packets destined for 203.0.113.1:80 → 192.168.1.10:8080 */
+
+sai_nat_entry_t dnat_entry;
+dnat_entry.switch_id = switch_id;
+dnat_entry.vr_id     = vrf_id;
+dnat_entry.nat_type  = SAI_NAT_TYPE_DESTINATION_NAT;
+
+/* Match key: dst_ip = 203.0.113.1, proto = TCP, dst_port = 80 */
+dnat_entry.data.key.dst_ip      = 0xCB007101; /* 203.0.113.1 */
+dnat_entry.data.key.src_ip      = 0;
+dnat_entry.data.key.proto       = 6;           /* TCP */
+dnat_entry.data.key.l4_dst_port = 80;
+dnat_entry.data.key.l4_src_port = 0;
+
+/* Mask: match only dst_ip and dst_port exactly */
+dnat_entry.data.mask.dst_ip      = 0xFFFFFFFF;
+dnat_entry.data.mask.src_ip      = 0;
+dnat_entry.data.mask.proto       = 0xFF;
+dnat_entry.data.mask.l4_dst_port = 0xFFFF;
+dnat_entry.data.mask.l4_src_port = 0;
+
+/* Attributes: translated destination = 192.168.1.10:8080 */
+sai_attribute_t attrs[4];
+attrs[0].id = SAI_NAT_ENTRY_ATTR_NAT_TYPE;
+attrs[0].value.s32 = SAI_NAT_TYPE_DESTINATION_NAT;
+attrs[1].id = SAI_NAT_ENTRY_ATTR_DST_IP;
+attrs[1].value.ip4 = 0xC0A8010A; /* 192.168.1.10 */
+attrs[2].id = SAI_NAT_ENTRY_ATTR_L4_DST_PORT;
+attrs[2].value.u16 = 8080;
+attrs[3].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+attrs[3].value.booldata = true;
+
+nat_api->create_nat_entry(&dnat_entry, 4, attrs);
+```
+
+<Tip>
+  For stateful NAT (tracking per-flow translations), use aging and hit-bit polling together: set a short `SAI_NAT_ENTRY_ATTR_AGING_TIME`, poll `SAI_NAT_ENTRY_ATTR_HIT_BIT` periodically, and refresh or remove entries based on traffic activity. The hardware aging notification (`SAI_NAT_EVENT_AGED`) can supplement or replace software polling.
+</Tip>

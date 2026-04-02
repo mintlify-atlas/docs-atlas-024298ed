@@ -1,0 +1,349 @@
+---
+title: "API Overview"
+description: "Global initialization functions, API modules, and status codes for the Switch Abstraction Interface."
+---
+
+SAI exposes its functionality through a set of API modules, each represented by a C method table retrieved at runtime. Before using any module, you must initialize the adapter with `sai_api_initialize()` and retrieve the desired method table with `sai_api_query()`.
+
+<CardGroup cols={2}>
+  <Card title="Switch API" icon="server" href="/api/switch">
+    Create and configure switch instances, set global properties, and register event callbacks.
+  </Card>
+  <Card title="Port API" icon="plug" href="/api/port">
+    Create ports, configure speed and FEC, read operational status, and collect statistics.
+  </Card>
+</CardGroup>
+
+---
+
+## Global functions
+
+### `sai_api_initialize()`
+
+Initializes the SAI adapter module. This must be called before any other SAI function. It is **not** an SDK initialization call—it loads the adapter library and supplies the service method table.
+
+```c
+sai_status_t sai_api_initialize(
+        _In_ uint64_t flags,
+        _In_ const sai_service_method_table_t *services);
+```
+
+<ParamField path="flags" type="uint64_t">
+  Reserved for future use. Must be zero.
+</ParamField>
+
+<ParamField path="services" type="const sai_service_method_table_t *">
+  Pointer to a caller-provided method table that exposes profile key-value services to the adapter. The table contains two function pointers: `profile_get_value` and `profile_get_next_value`.
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+### `sai_api_query()`
+
+Retrieves a pointer to the C-style method table for a specific SAI API module. The returned pointer remains valid until `sai_api_uninitialize()` is called.
+
+```c
+sai_status_t sai_api_query(
+        _In_ sai_api_t api,
+        _Out_ void **api_method_table);
+```
+
+<ParamField path="api" type="sai_api_t">
+  The SAI API module identifier (e.g., `SAI_API_SWITCH`, `SAI_API_PORT`).
+</ParamField>
+
+<ParamField path="api_method_table" type="void **">
+  Caller-allocated output pointer that receives the address of the method table. The caller must cast it to the appropriate typed pointer (e.g., `sai_switch_api_t *`).
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+```c
+sai_switch_api_t *switch_api = NULL;
+sai_status_t status = sai_api_query(SAI_API_SWITCH, (void **)&switch_api);
+```
+
+---
+
+### `sai_api_uninitialize()`
+
+Uninitializes the adapter module. Any method tables retrieved via `sai_api_query()` must not be used after this call.
+
+```c
+sai_status_t sai_api_uninitialize(void);
+```
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+### `sai_log_set()`
+
+Sets the logging level for a specific SAI API module. The default log level is `SAI_LOG_LEVEL_WARN`.
+
+```c
+sai_status_t sai_log_set(
+        _In_ sai_api_t api,
+        _In_ sai_log_level_t log_level);
+```
+
+<ParamField path="api" type="sai_api_t">
+  The SAI API module identifier whose log level to configure.
+</ParamField>
+
+<ParamField path="log_level" type="sai_log_level_t">
+  The desired log verbosity. Valid values: `SAI_LOG_LEVEL_DEBUG` (0), `SAI_LOG_LEVEL_INFO` (1), `SAI_LOG_LEVEL_NOTICE` (2), `SAI_LOG_LEVEL_WARN` (3), `SAI_LOG_LEVEL_ERROR` (4), `SAI_LOG_LEVEL_CRITICAL` (5).
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+### `sai_object_type_query()`
+
+Returns the SAI object type of a given object ID.
+
+```c
+sai_object_type_t sai_object_type_query(
+        _In_ sai_object_id_t object_id);
+```
+
+<ParamField path="object_id" type="sai_object_id_t">
+  The 64-bit object identifier to query.
+</ParamField>
+
+**Returns:** `SAI_OBJECT_TYPE_NULL` when the object ID is invalid; otherwise a valid `SAI_OBJECT_TYPE_XXX` value.
+
+---
+
+### `sai_switch_id_query()`
+
+Returns the switch object ID that owns a given object.
+
+```c
+sai_object_id_t sai_switch_id_query(
+        _In_ sai_object_id_t object_id);
+```
+
+<ParamField path="object_id" type="sai_object_id_t">
+  Any SAI object ID. If a switch object ID is passed, it is returned as-is.
+</ParamField>
+
+**Returns:** `SAI_NULL_OBJECT_ID` when the object ID is invalid; otherwise the `SAI_OBJECT_TYPE_SWITCH` object ID that owns the given object.
+
+---
+
+### `sai_dbg_generate_dump()`
+
+Generates a diagnostic dump file that may include SAI state information and vendor SDK internals.
+
+```c
+sai_status_t sai_dbg_generate_dump(
+        _In_ const char *dump_file_name);
+```
+
+<ParamField path="dump_file_name" type="const char *">
+  Full filesystem path for the output dump file.
+</ParamField>
+
+**Returns:** `SAI_STATUS_SUCCESS` on success, otherwise a failure status code.
+
+---
+
+### `sai_object_type_get_availability()`
+
+Queries the remaining hardware resource capacity for a given SAI object type.
+
+```c
+sai_status_t sai_object_type_get_availability(
+        _In_ sai_object_id_t switch_id,
+        _In_ sai_object_type_t object_type,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list,
+        _Out_ uint64_t *count);
+```
+
+<ParamField path="switch_id" type="sai_object_id_t">
+  The switch object ID to query against.
+</ParamField>
+
+<ParamField path="object_type" type="sai_object_type_t">
+  The SAI object type for which to check resource availability.
+</ParamField>
+
+<ParamField path="attr_count" type="uint32_t">
+  Number of attributes in `attr_list`.
+</ParamField>
+
+<ParamField path="attr_list" type="const sai_attribute_t *">
+  Optional attribute list to distinguish resource sub-types (e.g., ACL table stage).
+</ParamField>
+
+<ParamField path="count" type="uint64_t *">
+  Output: number of objects of the given type that can still be created.
+</ParamField>
+
+**Returns:** `SAI_STATUS_NOT_SUPPORTED` if the object type does not support resource accounting; otherwise `SAI_STATUS_SUCCESS`.
+
+---
+
+## API modules (`sai_api_t`)
+
+The `sai_api_t` enum lists all 55 API modules. Pass these identifiers to `sai_api_query()` to retrieve the corresponding method table.
+
+| ID | Constant | Method table type |
+|----|----------|------------------|
+| 0  | `SAI_API_UNSPECIFIED` | — |
+| 1  | `SAI_API_SWITCH` | `sai_switch_api_t` |
+| 2  | `SAI_API_PORT` | `sai_port_api_t` |
+| 3  | `SAI_API_FDB` | `sai_fdb_api_t` |
+| 4  | `SAI_API_VLAN` | `sai_vlan_api_t` |
+| 5  | `SAI_API_VIRTUAL_ROUTER` | `sai_virtual_router_api_t` |
+| 6  | `SAI_API_ROUTE` | `sai_route_api_t` |
+| 7  | `SAI_API_NEXT_HOP` | `sai_next_hop_api_t` |
+| 8  | `SAI_API_NEXT_HOP_GROUP` | `sai_next_hop_group_api_t` |
+| 9  | `SAI_API_ROUTER_INTERFACE` | `sai_router_interface_api_t` |
+| 10 | `SAI_API_NEIGHBOR` | `sai_neighbor_api_t` |
+| 11 | `SAI_API_ACL` | `sai_acl_api_t` |
+| 12 | `SAI_API_HOSTIF` | `sai_hostif_api_t` |
+| 13 | `SAI_API_MIRROR` | `sai_mirror_api_t` |
+| 14 | `SAI_API_SAMPLEPACKET` | `sai_samplepacket_api_t` |
+| 15 | `SAI_API_STP` | `sai_stp_api_t` |
+| 16 | `SAI_API_LAG` | `sai_lag_api_t` |
+| 17 | `SAI_API_POLICER` | `sai_policer_api_t` |
+| 18 | `SAI_API_WRED` | `sai_wred_api_t` |
+| 19 | `SAI_API_QOS_MAP` | `sai_qos_map_api_t` |
+| 20 | `SAI_API_QUEUE` | `sai_queue_api_t` |
+| 21 | `SAI_API_SCHEDULER` | `sai_scheduler_api_t` |
+| 22 | `SAI_API_SCHEDULER_GROUP` | `sai_scheduler_group_api_t` |
+| 23 | `SAI_API_BUFFER` | `sai_buffer_api_t` |
+| 24 | `SAI_API_HASH` | `sai_hash_api_t` |
+| 25 | `SAI_API_UDF` | `sai_udf_api_t` |
+| 26 | `SAI_API_TUNNEL` | `sai_tunnel_api_t` |
+| 27 | `SAI_API_L2MC` | `sai_l2mc_api_t` |
+| 28 | `SAI_API_IPMC` | `sai_ipmc_api_t` |
+| 29 | `SAI_API_RPF_GROUP` | `sai_rpf_group_api_t` |
+| 30 | `SAI_API_L2MC_GROUP` | `sai_l2mc_group_api_t` |
+| 31 | `SAI_API_IPMC_GROUP` | `sai_ipmc_group_api_t` |
+| 32 | `SAI_API_MCAST_FDB` | `sai_mcast_fdb_api_t` |
+| 33 | `SAI_API_BRIDGE` | `sai_bridge_api_t` |
+| 34 | `SAI_API_TAM` | `sai_tam_api_t` |
+| 35 | `SAI_API_SRV6` | `sai_srv6_api_t` |
+| 36 | `SAI_API_MPLS` | `sai_mpls_api_t` |
+| 37 | `SAI_API_DTEL` | `sai_dtel_api_t` (experimental) |
+| 38 | `SAI_API_BFD` | `sai_bfd_api_t` |
+| 39 | `SAI_API_ISOLATION_GROUP` | `sai_isolation_group_api_t` |
+| 40 | `SAI_API_NAT` | `sai_nat_api_t` |
+| 41 | `SAI_API_COUNTER` | `sai_counter_api_t` |
+| 42 | `SAI_API_DEBUG_COUNTER` | `sai_debug_counter_api_t` |
+| 43 | `SAI_API_MACSEC` | `sai_macsec_api_t` |
+| 44 | `SAI_API_SYSTEM_PORT` | `sai_system_port_api_t` |
+| 45 | `SAI_API_MY_MAC` | `sai_my_mac_api_t` |
+| 46 | `SAI_API_IPSEC` | `sai_ipsec_api_t` |
+| 47 | `SAI_API_GENERIC_PROGRAMMABLE` | `sai_generic_programmable_t` |
+| 48 | `SAI_API_ARS` | `sai_ars_api_t` |
+| 49 | `SAI_API_ARS_PROFILE` | `sai_ars_api_profile_t` |
+| 50 | `SAI_API_TWAMP` | `sai_twamp_api_t` |
+| 51 | `SAI_API_POE` | `sai_poe_api_t` |
+| 52 | `SAI_API_ICMP_ECHO` | `sai_icmp_echo_api_t` |
+| 53 | `SAI_API_PREFIX_COMPRESSION` | `sai_prefix_compression_api_t` |
+| 54 | `SAI_API_SYNCE` | `sai_synce_api_t` |
+
+<Note>
+IDs 0x10000000 and above are reserved for custom and extension ranges (`SAI_API_CUSTOM_RANGE_BASE`, `SAI_API_EXTENSIONS_RANGE_BASE`).
+</Note>
+
+---
+
+## Status codes (`sai_status_t`)
+
+All SAI functions that return `sai_status_t` use the following codes. On POSIX systems the values are negative integers; on Windows they map to positive codes.
+
+| Constant | Description |
+|----------|-------------|
+| `SAI_STATUS_SUCCESS` | Operation completed successfully. |
+| `SAI_STATUS_FAILURE` | General failure. |
+| `SAI_STATUS_NOT_SUPPORTED` | The request is not supported by this implementation. |
+| `SAI_STATUS_NO_MEMORY` | Insufficient memory to complete the operation. |
+| `SAI_STATUS_INSUFFICIENT_RESOURCES` | Insufficient system resources. |
+| `SAI_STATUS_INVALID_PARAMETER` | An invalid parameter was passed. |
+| `SAI_STATUS_ITEM_ALREADY_EXISTS` | An item already exists (e.g., duplicate route). |
+| `SAI_STATUS_ITEM_NOT_FOUND` | The requested item does not exist. |
+| `SAI_STATUS_BUFFER_OVERFLOW` | The data was too large for the provided buffer. Retry with the count returned by the callee. |
+| `SAI_STATUS_INVALID_PORT_NUMBER` | Invalid port number. |
+| `SAI_STATUS_INVALID_PORT_MEMBER` | Invalid port member. |
+| `SAI_STATUS_INVALID_VLAN_ID` | Invalid VLAN ID. |
+| `SAI_STATUS_UNINITIALIZED` | Object is uninitialized. |
+| `SAI_STATUS_TABLE_FULL` | Hardware table is full. |
+| `SAI_STATUS_MANDATORY_ATTRIBUTE_MISSING` | A mandatory attribute was not provided. |
+| `SAI_STATUS_NOT_IMPLEMENTED` | The function is not implemented. |
+| `SAI_STATUS_ADDR_NOT_FOUND` | Address not found. |
+| `SAI_STATUS_OBJECT_IN_USE` | The SAI object is still in use and cannot be removed. |
+| `SAI_STATUS_INVALID_OBJECT_TYPE` | Invalid SAI object type was passed. |
+| `SAI_STATUS_INVALID_OBJECT_ID` | Invalid SAI object ID (e.g., already deleted). |
+| `SAI_STATUS_INVALID_NV_STORAGE` | NV storage is invalid or corrupt. |
+| `SAI_STATUS_NV_STORAGE_FULL` | NV storage is full. |
+| `SAI_STATUS_SW_UPGRADE_VERSION_MISMATCH` | Version mismatch during in-service upgrade. |
+| `SAI_STATUS_NOT_EXECUTED` | Operation was not executed. |
+| `SAI_STATUS_STAGE_MISMATCH` | Object pipeline stage mismatch. |
+| `SAI_STATUS_INVALID_ATTRIBUTE_0` | Attribute at index N is invalid (range 0x00010000–0x0001FFFF). |
+| `SAI_STATUS_INVALID_ATTR_VALUE_0` | Attribute value at index N is invalid (range 0x00020000–0x0002FFFF). |
+| `SAI_STATUS_ATTR_NOT_IMPLEMENTED_0` | Attribute at index N is supported but not implemented (range 0x00030000–0x0003FFFF). |
+| `SAI_STATUS_UNKNOWN_ATTRIBUTE_0` | Attribute at index N is unknown/out of range (range 0x00040000–0x0004FFFF). |
+| `SAI_STATUS_ATTR_NOT_SUPPORTED_0` | Attribute at index N is not supported on this platform (range 0x00050000–0x0005FFFF). |
+
+<Tip>
+For attribute-related errors, the offset from the base constant is the array index of the offending attribute in the list passed to the SAI API call. Use the helper macros `SAI_STATUS_IS_INVALID_ATTRIBUTE(x)`, `SAI_STATUS_IS_INVALID_ATTR_VALUE(x)`, etc., to test the error category.
+</Tip>
+
+---
+
+## Initialization sequence
+
+The typical lifecycle for a SAI consumer:
+
+```c
+#include <sai.h>
+
+/* Service callbacks provided to the adapter */
+static const char *profile_get_value(sai_switch_profile_id_t profile_id,
+                                     const char *variable) {
+    (void)profile_id;
+    if (strcmp(variable, "some_key") == 0) return "some_value";
+    return NULL;
+}
+
+static int profile_get_next_value(sai_switch_profile_id_t profile_id,
+                                  const char **variable,
+                                  const char **value) {
+    (void)profile_id; (void)variable; (void)value;
+    return -1; /* no more entries */
+}
+
+int main(void) {
+    sai_service_method_table_t services = {
+        .profile_get_value      = profile_get_value,
+        .profile_get_next_value = profile_get_next_value,
+    };
+
+    /* 1. Initialize the adapter */
+    sai_status_t status = sai_api_initialize(0, &services);
+    if (status != SAI_STATUS_SUCCESS) return 1;
+
+    /* 2. Set desired log level */
+    sai_log_set(SAI_API_SWITCH, SAI_LOG_LEVEL_INFO);
+
+    /* 3. Retrieve a method table */
+    sai_switch_api_t *switch_api = NULL;
+    status = sai_api_query(SAI_API_SWITCH, (void **)&switch_api);
+    if (status != SAI_STATUS_SUCCESS) return 1;
+
+    /* ... use switch_api->create_switch(), etc. ... */
+
+    /* 4. Uninitialize when done */
+    sai_api_uninitialize();
+    return 0;
+}
+```

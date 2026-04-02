@@ -1,0 +1,192 @@
+---
+title: "Adapter"
+description: "How a SAI Adapter is structured, loaded, initialized, and connected to the forwarding element."
+---
+
+An **Adapter** is a dynamically loaded shared library that implements the SAI API for a specific forwarding element — a switching ASIC, an NPU, or a software switch. The Adapter is the boundary between the vendor-neutral SAI interface and the vendor-specific SDK or hardware driver beneath it.
+
+## Terminology
+
+| Term | Definition |
+|---|---|
+| **Adapter** | The shared library (`.so` / `.dll`) that implements SAI for a given forwarding element. Typically supplied by the ASIC vendor. |
+| **Forwarding element** | The hardware or software whose forwarding plane the Adapter controls: a switch ASIC, an NPU, or a software dataplane. |
+| **Adapter Host** | A software process that loads the Adapter, acquires its API tables, and drives it on behalf of the control stack. |
+| **Control stack** | The collection of software components (routing daemon, orchestration agent, counter collector, etc.) that use SAI to program the forwarding element. |
+
+## How the Adapter is loaded
+
+The Adapter Host locates the Adapter shared library through platform configuration, then uses the OS dynamic linker to load it at runtime.
+
+<Steps>
+  <Step title="Load the shared library">
+    The Adapter Host calls `dlopen` (on Linux) or the equivalent on other platforms to load the Adapter `.so`. The library path is provided by platform configuration, not compiled into the host.
+
+    ```c
+    #include <dlfcn.h>
+
+    void *adapter_handle = dlopen("/usr/lib/libsai.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!adapter_handle) {
+        fprintf(stderr, "dlopen failed: %s\n", dlerror());
+        return -1;
+    }
+    ```
+  </Step>
+  <Step title="Resolve the entry points">
+    Three well-known symbols must be present in every compliant Adapter: `sai_api_initialize`, `sai_api_query`, and `sai_api_uninitialize`. The Adapter Host resolves them with `dlsym`.
+
+    ```c
+    typedef sai_status_t (*sai_api_initialize_fn)(
+        uint64_t flags,
+        const sai_service_method_table_t *services);
+
+    sai_api_initialize_fn sai_api_initialize =
+        (sai_api_initialize_fn) dlsym(adapter_handle, "sai_api_initialize");
+    ```
+  </Step>
+  <Step title="Initialize the Adapter">
+    Call `sai_api_initialize`, passing zero for `flags` and a pointer to the `sai_service_method_table_t` that the Adapter Host implements. This is a **software-only** initialization step: no hardware is touched yet.
+
+    ```c
+    sai_status_t status = sai_api_initialize(0, &service_methods);
+    if (status != SAI_STATUS_SUCCESS) {
+        /* Adapter failed to initialize its internal state */
+    }
+    ```
+  </Step>
+  <Step title="Query API method tables">
+    Call `sai_api_query` once per SAI module to retrieve the C-style function pointer table for that module. The tables remain valid until `sai_api_uninitialize` is called.
+
+    ```c
+    sai_switch_api_t *switch_api = NULL;
+    sai_port_api_t   *port_api   = NULL;
+
+    sai_api_query(SAI_API_SWITCH, (void **)&switch_api);
+    sai_api_query(SAI_API_PORT,   (void **)&port_api);
+    ```
+  </Step>
+  <Step title="Initialize the forwarding element">
+    One Adapter Host (and only one) calls `switch_api->create_switch` to perform hardware initialization and receive the root `switch_id` OID. All other Adapter Hosts that share the same forwarding element call a connect variant instead.
+
+    ```c
+    sai_object_id_t switch_id;
+    sai_attribute_t sw_attrs[2];
+
+    sw_attrs[0].id       = SAI_SWITCH_ATTR_INIT_SWITCH;
+    sw_attrs[0].value.booldata = true;
+
+    sw_attrs[1].id       = SAI_SWITCH_ATTR_SWITCH_PROFILE_ID;
+    sw_attrs[1].value.u32 = profile_id;
+
+    switch_api->create_switch(&switch_id, 2, sw_attrs);
+    ```
+  </Step>
+</Steps>
+
+## The service method table
+
+During `sai_api_initialize`, the Adapter Host provides a `sai_service_method_table_t` that gives the Adapter access to host-side services:
+
+```c
+typedef struct _sai_service_method_table_t
+{
+    /** Get a single key-value pair from the switch profile */
+    sai_profile_get_value_fn      profile_get_value;
+
+    /** Enumerate all key-value pairs in the profile.
+        Passing NULL as variable restarts enumeration.
+        Returns 0 if a next value exists, -1 at end of list. */
+    sai_profile_get_next_value_fn profile_get_next_value;
+} sai_service_method_table_t;
+```
+
+The profile is a set of string key-value pairs that carry vendor-specific initialization parameters such as SDK library paths, NPU config file paths, or hardware revision overrides. The Adapter calls `profile_get_value` and `profile_get_next_value` during its own initialization to read whatever settings it needs.
+
+```c
+/* Example: Adapter Host implementation */
+static const char *my_profile_get_value(
+    sai_switch_profile_id_t profile_id,
+    const char *variable)
+{
+    if (strcmp(variable, "SAI_KEY_WARM_BOOT_READ_FILE") == 0)
+        return "/var/lib/sai/warmboot.bin";
+    return NULL;
+}
+
+static int my_profile_get_next_value(
+    sai_switch_profile_id_t profile_id,
+    const char **variable,
+    const char **value)
+{
+    /* ... iterate over key-value table ... */
+}
+
+static sai_service_method_table_t service_methods = {
+    .profile_get_value      = my_profile_get_value,
+    .profile_get_next_value = my_profile_get_next_value,
+};
+```
+
+## Stateless design
+
+A core principle of the SAI Adapter is that **the Adapter holds no persistent configuration**. All forwarding state originates in the control stack and is pushed down to the Adapter via SAI CRUD calls. The Adapter keeps only whatever transient state the hardware requires to accomplish the task at hand.
+
+This design has two important consequences:
+
+1. **The control stack is the source of truth.** If the Adapter crashes or is shut down, no configuration is lost. The control stack retains the full intended state and can re-program the Adapter from scratch.
+
+2. **Crash recovery is straightforward.** After a restart, the Adapter Host re-runs the loading sequence above and re-issues all create and set calls to bring the forwarding element back to the correct operational state. No warm-boot or state-synchronisation protocol is required by the SAI layer itself (though vendors may provide warm-boot extensions).
+
+<Note>
+Because the Adapter is stateless, the control stack must be prepared to replay its entire configuration after an Adapter restart. Design your control stack to maintain a canonical copy of every SAI object it has created.
+</Note>
+
+## Multiple Adapter Hosts
+
+The SAI architecture explicitly allows multiple Adapter Hosts to run simultaneously against the same forwarding element. Each host is responsible for a subset of the forwarding element's functions:
+
+<CardGroup cols={2}>
+  <Card title="Routing Adapter Host" icon="route">
+    Manages virtual routers, router interfaces, next hops, and IP routes. Calls `create_switch` on startup.
+  </Card>
+  <Card title="Counter Adapter Host" icon="chart-bar">
+    Periodically reads port statistics and counter objects. Connects to an already-initialized switch.
+  </Card>
+  <Card title="ACL Adapter Host" icon="filter">
+    Programs ACL tables and entries for security policy enforcement.
+  </Card>
+  <Card title="TAM Adapter Host" icon="telescope">
+    Configures Telemetry and Monitoring (TAM) objects for in-band telemetry.
+  </Card>
+</CardGroup>
+
+Only one Adapter Host may call `create_switch` (i.e., perform hardware initialization). All others must wait for that initialization to complete before calling `sai_api_query` and using the returned method tables.
+
+## Shutdown sequence
+
+<Steps>
+  <Step title="Shutdown the forwarding element">
+    The initializing Adapter Host calls `switch_api->remove_switch(switch_id)`. This returns the hardware to the state it was in before `create_switch` — links go down, forwarding stops.
+  </Step>
+  <Step title="Uninitialize the Adapter">
+    All Adapter Hosts call `sai_api_uninitialize()`. This reverses the software-level initialization done in `sai_api_initialize` and releases any resources the Adapter allocated internally.
+  </Step>
+  <Step title="Unload the library">
+    The Adapter Host calls `dlclose` on the handle returned by `dlopen`. After this point no Adapter symbols may be called.
+  </Step>
+</Steps>
+
+<CardGroup cols={2}>
+  <Card title="Object model" icon="cubes" href="/concepts/object-model">
+    The OID-based object lifecycle that the Adapter implements.
+  </Card>
+  <Card title="Attributes" icon="sliders" href="/concepts/attributes">
+    How configuration is passed to the Adapter through attribute lists.
+  </Card>
+  <Card title="Extensions" icon="flask" href="/concepts/extensions">
+    Vendor-specific APIs that the Adapter can expose beyond the standard SAI surface.
+  </Card>
+  <Card title="Switch initialization" icon="power-off" href="/guides/switch-initialization">
+    Step-by-step guide to creating the root switch object.
+  </Card>
+</CardGroup>

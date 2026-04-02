@@ -1,0 +1,73 @@
+---
+title: "Introduction"
+description: "SAI is a vendor-independent C API for controlling switching ASICs, NPUs, and software switches in a uniform manner."
+---
+
+The Switch Abstraction Interface (SAI) defines an API that provides a vendor-independent way of controlling forwarding elements—such as a switching ASIC, an NPU, or a software switch—in a uniform manner.
+
+SAI was originally developed by a collaboration of Microsoft, Dell, Facebook, Broadcom, Intel, and Mellanox, and is now governed under the Open Compute Project (OCP). It is the foundation of [SONiC](https://sonic-net.github.io/SONiC/) and other network operating systems that need to run across multiple hardware platforms without vendor lock-in.
+
+## What SAI does
+
+A network operating system needs to program forwarding hardware—installing routes, configuring ports, managing ACLs, and hundreds of other operations. Without an abstraction layer, every NOS must contain vendor-specific code for each ASIC it supports. SAI eliminates that coupling by defining a single C interface that any conforming adapter must implement.
+
+Instead of writing to a Broadcom SDK, a Mellanox SDK, or any other vendor-specific library, the NOS calls SAI functions. The vendor ships an adapter (a shared library) that translates those calls into whatever the underlying hardware requires.
+
+## Key use cases
+
+- **SONiC**: The primary consumer of SAI. SONiC uses SAI to support dozens of switching platforms from multiple vendors behind a single network OS stack.
+- **Network OS vendors**: Any NOS that targets commodity switching hardware benefits from a hardware-independent control plane.
+- **Test and simulation**: Software switch adapters (such as the SAI PTF-based simulator) allow automated testing of NOS logic without physical hardware.
+
+## Design goals
+
+SAI is designed around a small number of principles that make it practical to implement and maintain across a large ecosystem:
+
+**CRUD-based object model.** Every entity in the forwarding plane—ports, routes, VLANs, ACLs, next hops—is a SAI object with a well-known lifecycle: create, read (get), update (set), and delete. Adapters only need to handle these four operations per object type.
+
+**Attribute-based API.** Rather than passing large version-sensitive structs, SAI uses `(id, value)` attribute pairs (`sai_attribute_t`). This allows new attributes to be added without breaking existing callers, and lets callers omit optional attributes they do not need.
+
+**Vendor-independent.** The API surface is defined entirely in the `inc/` headers under a permissive license. Vendors implement the interface without any OCP involvement in the implementation itself.
+
+**Stateless adapter.** Adapters are not the source of truth for configuration state. They can be restarted, and the control stack can reconstruct adapter state by replaying configuration. This enables warm-reboot scenarios where the data plane continues forwarding while the adapter reinitializes.
+
+**OS-agnostic.** The C API is designed to compile and run on Linux, Windows, and other platforms.
+
+## Key definitions
+
+The following terms appear throughout this documentation and the SAI specification:
+
+| Term | Definition |
+|---|---|
+| **Adapter** | A pluggable shared library that implements SAI for a specific forwarding element. Typically supplied by the hardware vendor. |
+| **Adapter Host** | A software component that loads the adapter via `dlopen` and exposes its functionality to the rest of the control stack. |
+| **Control Stack** | The set of software components that call SAI—the NOS, routing daemons, and other network control applications. |
+| **Forwarding Element** | The hardware or software that performs actual packet forwarding: a switching ASIC, an NPU, or a software switch. |
+
+Multiple Adapter Hosts can run simultaneously against the same forwarding element. For example, one Adapter Host may be responsible for IP route programming while another reads telemetry counters.
+
+## API surface
+
+SAI exposes over 50 functional API groups, each accessed through a C method table. Examples include:
+
+- `sai_switch_api_t` — top-level switch object (mandatory)
+- `sai_port_api_t` — physical port management (mandatory)
+- `sai_route_api_t` — IP routing table (mandatory)
+- `sai_acl_api_t` — Access Control Lists (mandatory)
+- `sai_tunnel_api_t` — tunneling (optional)
+- `sai_mirror_api_t` — port mirroring (optional)
+
+Each method table is retrieved at runtime via `sai_api_query()`. Mandatory APIs must be present or adapter loading fails. Optional APIs may be absent, and the control stack should handle that gracefully.
+
+## License and governance
+
+SAI is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). The project is hosted under the [Open Compute Project](https://www.opencompute.org/) and developed in the open at [github.com/opencomputeproject/SAI](https://github.com/opencomputeproject/SAI).
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Load an adapter and make your first SAI API call.
+  </Card>
+  <Card title="Architecture" icon="layer-group" href="/architecture">
+    Understand the three-layer design and the adapter lifecycle.
+  </Card>
+</CardGroup>

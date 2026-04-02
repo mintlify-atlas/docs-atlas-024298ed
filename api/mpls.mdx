@@ -1,0 +1,166 @@
+---
+title: "MPLS API"
+description: "API for MPLS label switching: in-segment (ILM) entries for POP, SWAP, and PUSH label operations."
+---
+
+The SAI MPLS API (`sai_mpls_api_t`) programs the Incoming Label Map (ILM), which defines how the switch handles packets arriving with a specific MPLS label. Label push operations on egress are configured through MPLS next hops (`SAI_NEXT_HOP_TYPE_MPLS`), not through this API.
+
+## MPLS label operations
+
+MPLS forwarding is based on three fundamental operations performed on the label stack:
+
+| Operation | Description |
+|---|---|
+| **POP** | Remove the top label from the stack and forward the inner packet |
+| **SWAP** | Replace the top label with a new label and forward |
+| **PUSH** | Add one or more labels to the stack (configured via next hop, not inseg entry) |
+
+In SAI, these operations are encoded in the `SAI_INSEG_ENTRY_ATTR_NUM_OF_POP` attribute combined with the next hop type:
+
+- `num_of_pop = 1` with a next hop → **SWAP**: pop the incoming label and push the label(s) from the next hop
+- `num_of_pop = 1` with a router interface next hop → **PHP** (Penultimate Hop Pop): pop the label and forward as IP
+- `num_of_pop = 1` with no next hop → **POP**: strip the label and continue
+
+## In-segment entry (`sai_inseg_entry_t`)
+
+An in-segment entry identifies an MPLS label in the global ILM. It is a struct-based entry (not an object ID), similar to route and FDB entries.
+
+```c
+typedef struct _sai_inseg_entry_t {
+    sai_object_id_t switch_id;  /* SAI_OBJECT_TYPE_SWITCH */
+    sai_label_id_t  label;      /* MPLS label value (20 bits) */
+} sai_inseg_entry_t;
+```
+
+## In-segment attributes (`sai_inseg_entry_attr_t`)
+
+<ParamField path="SAI_INSEG_ENTRY_ATTR_NUM_OF_POP" type="sai_uint8_t">
+  Number of labels to pop from the top of the stack on ingress. Default: 0.
+</ParamField>
+
+<ParamField path="SAI_INSEG_ENTRY_ATTR_PACKET_ACTION" type="sai_packet_action_t">
+  Action to take: `SAI_PACKET_ACTION_FORWARD`, `SAI_PACKET_ACTION_DROP`, `SAI_PACKET_ACTION_TRAP`, etc. Default: `SAI_PACKET_ACTION_FORWARD`.
+</ParamField>
+
+<ParamField path="SAI_INSEG_ENTRY_ATTR_NEXT_HOP_ID" type="sai_object_id_t">
+  Next hop, next hop group, or router interface to forward to after label processing. Null means drop (or trap if action is trap). Default: `SAI_NULL_OBJECT_ID`.
+</ParamField>
+
+<ParamField path="SAI_INSEG_ENTRY_ATTR_PSC_TYPE" type="sai_inseg_entry_psc_type_t">
+  Per-hop behavior scheduling class type. `SAI_INSEG_ENTRY_PSC_TYPE_ELSP` (EXP infers both TC and color) or `SAI_INSEG_ENTRY_PSC_TYPE_LLSP` (label infers TC, EXP infers color). Default: ELSP.
+</ParamField>
+
+<ParamField path="SAI_INSEG_ENTRY_ATTR_QOS_TC" type="sai_uint8_t">
+  Traffic class assigned by label for L-LSP (LLSP) tunnels. Overrides QoS map. Valid only when PSC type is LLSP. Default: 0.
+</ParamField>
+
+<ParamField path="SAI_INSEG_ENTRY_ATTR_MPLS_EXP_TO_TC_MAP" type="sai_object_id_t">
+  Per-label QoS map overriding the switch-level and port-level EXP-to-TC map. Valid for ELSP. Default: `SAI_NULL_OBJECT_ID`.
+</ParamField>
+
+<ParamField path="SAI_INSEG_ENTRY_ATTR_MPLS_EXP_TO_COLOR_MAP" type="sai_object_id_t">
+  Per-label QoS map overriding the switch-level and port-level EXP-to-color map. Default: `SAI_NULL_OBJECT_ID`.
+</ParamField>
+
+<ParamField path="SAI_INSEG_ENTRY_ATTR_POP_TTL_MODE" type="sai_inseg_entry_pop_ttl_mode_t">
+  TTL handling when popping: `SAI_INSEG_ENTRY_POP_TTL_MODE_UNIFORM` (copy outer TTL to inner) or `SAI_INSEG_ENTRY_POP_TTL_MODE_PIPE` (leave inner TTL unchanged). Default: uniform.
+</ParamField>
+
+<ParamField path="SAI_INSEG_ENTRY_ATTR_POP_QOS_MODE" type="sai_inseg_entry_pop_qos_mode_t">
+  QoS field (DSCP or EXP) handling on pop: uniform (derived from TC+color of outer) or pipe (leave inner unchanged). Default: uniform.
+</ParamField>
+
+<ParamField path="SAI_INSEG_ENTRY_ATTR_COUNTER_ID" type="sai_object_id_t">
+  Counter object for hit counting. Default: `SAI_NULL_OBJECT_ID` (no counting).
+</ParamField>
+
+## Functions
+
+```c
+/* Single entry operations */
+sai_status_t create_inseg_entry(const sai_inseg_entry_t *inseg_entry,
+                                 uint32_t attr_count,
+                                 const sai_attribute_t *attr_list);
+
+sai_status_t remove_inseg_entry(const sai_inseg_entry_t *inseg_entry);
+
+sai_status_t set_inseg_entry_attribute(const sai_inseg_entry_t *inseg_entry,
+                                        const sai_attribute_t *attr);
+
+sai_status_t get_inseg_entry_attribute(const sai_inseg_entry_t *inseg_entry,
+                                        uint32_t attr_count,
+                                        sai_attribute_t *attr_list);
+
+/* Bulk operations */
+sai_status_t create_inseg_entries(uint32_t object_count,
+                                   const sai_inseg_entry_t *inseg_entry,
+                                   const uint32_t *attr_count,
+                                   const sai_attribute_t **attr_list,
+                                   sai_bulk_op_error_mode_t mode,
+                                   sai_status_t *object_statuses);
+
+sai_status_t remove_inseg_entries(uint32_t object_count,
+                                   const sai_inseg_entry_t *inseg_entry,
+                                   sai_bulk_op_error_mode_t mode,
+                                   sai_status_t *object_statuses);
+```
+
+## Relationship to MPLS next hops
+
+MPLS next hops (`SAI_NEXT_HOP_TYPE_MPLS`) are created with the regular next hop API and carry the outgoing label stack. The inseg entry points to these next hops:
+
+```c
+/* Create an MPLS next hop that pushes label 200 */
+sai_attribute_t nh_attrs[3];
+nh_attrs[0].id = SAI_NEXT_HOP_ATTR_TYPE;
+nh_attrs[0].value.s32 = SAI_NEXT_HOP_TYPE_MPLS;
+nh_attrs[1].id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
+nh_attrs[1].value.oid = rif_id;
+nh_attrs[2].id = SAI_NEXT_HOP_ATTR_LABELSTACK;
+/* labelstack configuration omitted for brevity */
+
+sai_object_id_t mpls_nh_id;
+next_hop_api->create_next_hop(&mpls_nh_id, switch_id, 3, nh_attrs);
+```
+
+## Example: label swap (incoming label 100 → outgoing label 200)
+
+```c
+/* Assume mpls_nh_id is an MPLS next hop that pushes label 200 */
+
+sai_inseg_entry_t inseg_entry;
+inseg_entry.switch_id = switch_id;
+inseg_entry.label     = 100;  /* incoming label to match */
+
+sai_attribute_t attrs[2];
+attrs[0].id = SAI_INSEG_ENTRY_ATTR_NUM_OF_POP;
+attrs[0].value.u8 = 1;              /* pop incoming label */
+attrs[1].id = SAI_INSEG_ENTRY_ATTR_NEXT_HOP_ID;
+attrs[1].value.oid = mpls_nh_id;   /* next hop pushes label 200 */
+
+mpls_api->create_inseg_entry(&inseg_entry, 2, attrs);
+```
+
+## Example: penultimate hop pop (PHP)
+
+PHP pops the MPLS label and forwards the inner IP packet through a router interface.
+
+```c
+sai_inseg_entry_t php_entry;
+php_entry.switch_id = switch_id;
+php_entry.label     = 300;
+
+sai_attribute_t php_attrs[3];
+php_attrs[0].id = SAI_INSEG_ENTRY_ATTR_NUM_OF_POP;
+php_attrs[0].value.u8 = 1;
+php_attrs[1].id = SAI_INSEG_ENTRY_ATTR_NEXT_HOP_ID;
+php_attrs[1].value.oid = router_interface_id; /* forward as IP */
+php_attrs[2].id = SAI_INSEG_ENTRY_ATTR_POP_TTL_MODE;
+php_attrs[2].value.s32 = SAI_INSEG_ENTRY_POP_TTL_MODE_UNIFORM;
+
+mpls_api->create_inseg_entry(&php_entry, 3, php_attrs);
+```
+
+<Info>
+  MPLS QoS maps for EXP-to-TC and EXP-to-color can be configured at three levels: switch-wide, per-port, or per-label (via inseg entry attributes). Per-label maps take highest precedence and override switch and port maps.
+</Info>

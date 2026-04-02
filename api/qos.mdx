@@ -1,0 +1,455 @@
+---
+title: "QoS API"
+description: "APIs for Quality of Service: traffic classification, queuing, scheduling, buffering, policing, and congestion management."
+---
+
+The SAI QoS subsystem is a collection of tightly related APIs that work together to enforce traffic priorities from ingress to egress. The objects form a pipeline:
+
+```
+Ingress port → QoS map (classify) → Queue → Scheduler → Buffer → WRED → Egress
+                                                ↑
+                                         Scheduler group
+                                        (hierarchical QoS)
+```
+
+A policer can be attached to a port or ACL to rate-limit traffic before it reaches the queue pipeline.
+
+## APIs
+
+| API struct | Object type | Purpose |
+|---|---|---|
+| `sai_qos_map_api_t` | `SAI_OBJECT_TYPE_QOS_MAP` | Map DSCP/Dot1p/TC to traffic class, color, or queue |
+| `sai_queue_api_t` | `SAI_OBJECT_TYPE_QUEUE` | Egress queue management and statistics |
+| `sai_scheduler_api_t` | `SAI_OBJECT_TYPE_SCHEDULER` | Scheduler profiles (SP, WRR, DWRR) |
+| `sai_scheduler_group_api_t` | `SAI_OBJECT_TYPE_SCHEDULER_GROUP` | Hierarchical scheduling groups |
+| `sai_buffer_api_t` | `SAI_OBJECT_TYPE_BUFFER_PROFILE`, `SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP` | Buffer profiles and ingress priority groups |
+| `sai_policer_api_t` | `SAI_OBJECT_TYPE_POLICER` | Token-bucket traffic policing |
+| `sai_wred_api_t` | `SAI_OBJECT_TYPE_WRED` | Weighted Random Early Detection profiles |
+
+---
+
+## QoS maps (`sai_qos_map_api_t`)
+
+QoS maps translate packet header fields into internal traffic-class and color values, or rewrite those fields on egress.
+
+### Map types (`sai_qos_map_type_t`)
+
+| Value | Direction | Description |
+|---|---|---|
+| `SAI_QOS_MAP_TYPE_DSCP_TO_TC` | Ingress | Map IP DSCP value → traffic class |
+| `SAI_QOS_MAP_TYPE_DSCP_TO_COLOR` | Ingress | Map IP DSCP value → packet color |
+| `SAI_QOS_MAP_TYPE_DOT1P_TO_TC` | Ingress | Map 802.1p priority bits → traffic class |
+| `SAI_QOS_MAP_TYPE_DOT1P_TO_COLOR` | Ingress | Map 802.1p priority bits → packet color |
+| `SAI_QOS_MAP_TYPE_TC_TO_QUEUE` | Egress | Map traffic class → egress queue index |
+| `SAI_QOS_MAP_TYPE_TC_AND_COLOR_TO_DSCP` | Egress | Rewrite DSCP from traffic class + color |
+| `SAI_QOS_MAP_TYPE_TC_AND_COLOR_TO_DOT1P` | Egress | Rewrite 802.1p from traffic class + color |
+| `SAI_QOS_MAP_TYPE_TC_TO_PRIORITY_GROUP` | Ingress | Map traffic class → ingress priority group |
+| `SAI_QOS_MAP_TYPE_PFC_PRIORITY_TO_PRIORITY_GROUP` | Ingress | Map PFC priority → ingress priority group |
+| `SAI_QOS_MAP_TYPE_PFC_PRIORITY_TO_QUEUE` | Egress | Map received PFC priority → egress queue |
+| `SAI_QOS_MAP_TYPE_MPLS_EXP_TO_TC` | Ingress | Map MPLS EXP bits → traffic class |
+| `SAI_QOS_MAP_TYPE_MPLS_EXP_TO_COLOR` | Ingress | Map MPLS EXP bits → color |
+| `SAI_QOS_MAP_TYPE_TC_AND_COLOR_TO_MPLS_EXP` | Egress | Rewrite MPLS EXP from traffic class + color |
+| `SAI_QOS_MAP_TYPE_DSCP_TO_FORWARDING_CLASS` | Ingress | Map DSCP → forwarding class |
+| `SAI_QOS_MAP_TYPE_MPLS_EXP_TO_FORWARDING_CLASS` | Ingress | Map MPLS EXP → forwarding class |
+
+### Attributes (`sai_qos_map_attr_t`)
+
+<ParamField path="SAI_QOS_MAP_ATTR_TYPE" type="sai_qos_map_type_t">
+  The map type. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST" type="sai_qos_map_list_t">
+  List of key-value pairs for the mapping. Mandatory on create. Can be updated after creation.
+</ParamField>
+
+### Functions
+
+```c
+sai_status_t create_qos_map(sai_object_id_t *qos_map_id,
+                             sai_object_id_t switch_id,
+                             uint32_t attr_count,
+                             const sai_attribute_t *attr_list);
+
+sai_status_t remove_qos_map(sai_object_id_t qos_map_id);
+
+sai_status_t set_qos_map_attribute(sai_object_id_t qos_map_id,
+                                    const sai_attribute_t *attr);
+
+sai_status_t get_qos_map_attribute(sai_object_id_t qos_map_id,
+                                    uint32_t attr_count,
+                                    sai_attribute_t *attr_list);
+```
+
+---
+
+## Queues (`sai_queue_api_t`)
+
+Each port has a set of hardware egress queues. Queues are auto-created by the switch and retrieved; they are not created by the caller. A scheduler profile, buffer profile, and WRED profile can all be attached to a queue.
+
+### Queue types (`sai_queue_type_t`)
+
+| Value | Description |
+|---|---|
+| `SAI_QUEUE_TYPE_ALL` | Handles all traffic types |
+| `SAI_QUEUE_TYPE_UNICAST` | Egress unicast queue |
+| `SAI_QUEUE_TYPE_MULTICAST` | Egress multicast (BUM) queue |
+| `SAI_QUEUE_TYPE_UNICAST_VOQ` | Ingress virtual output queue (unicast) |
+| `SAI_QUEUE_TYPE_MULTICAST_VOQ` | Fabric multicast virtual output queue |
+| `SAI_QUEUE_TYPE_FABRIC_TX` | Fabric transmit queue |
+
+### Key attributes (`sai_queue_attr_t`)
+
+<ParamField path="SAI_QUEUE_ATTR_TYPE" type="sai_queue_type_t">
+  Queue type. Mandatory on create, create-only key.
+</ParamField>
+
+<ParamField path="SAI_QUEUE_ATTR_PORT" type="sai_object_id_t">
+  Port this queue belongs to. Mandatory on create, create-only key.
+</ParamField>
+
+<ParamField path="SAI_QUEUE_ATTR_INDEX" type="sai_uint8_t">
+  Zero-based queue index on the port. Mandatory on create, create-only key.
+</ParamField>
+
+<ParamField path="SAI_QUEUE_ATTR_PARENT_SCHEDULER_NODE" type="sai_object_id_t">
+  Parent scheduler group or port for hierarchical QoS. Mandatory on create.
+</ParamField>
+
+<ParamField path="SAI_QUEUE_ATTR_WRED_PROFILE_ID" type="sai_object_id_t">
+  Attached WRED profile. Set to `SAI_NULL_OBJECT_ID` to disable. Default: `SAI_NULL_OBJECT_ID`.
+</ParamField>
+
+<ParamField path="SAI_QUEUE_ATTR_BUFFER_PROFILE_ID" type="sai_object_id_t">
+  Attached buffer profile. Default: `SAI_NULL_OBJECT_ID`.
+</ParamField>
+
+<ParamField path="SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID" type="sai_object_id_t">
+  Attached scheduler profile. Default: `SAI_NULL_OBJECT_ID`.
+</ParamField>
+
+<ParamField path="SAI_QUEUE_ATTR_PAUSE_STATUS" type="bool">
+  Read-only. True when the queue is paused by PFC.
+</ParamField>
+
+---
+
+## Schedulers (`sai_scheduler_api_t`)
+
+A scheduler profile defines how a queue or scheduler group shares bandwidth with its peers. It can be attached to a queue, a scheduler group, or a port.
+
+### Scheduling algorithms (`sai_scheduling_type_t`)
+
+| Value | Description |
+|---|---|
+| `SAI_SCHEDULING_TYPE_STRICT` | Strict Priority — higher-priority queue is always served first |
+| `SAI_SCHEDULING_TYPE_WRR` | Weighted Round Robin |
+| `SAI_SCHEDULING_TYPE_DWRR` | Deficit Weighted Round Robin — fairer byte-level sharing |
+
+### Attributes (`sai_scheduler_attr_t`)
+
+<ParamField path="SAI_SCHEDULER_ATTR_SCHEDULING_TYPE" type="sai_scheduling_type_t">
+  Scheduling algorithm. Default: `SAI_SCHEDULING_TYPE_WRR`.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_ATTR_SCHEDULING_WEIGHT" type="sai_uint8_t">
+  Weight in range [1–255]. Valid only for DWRR. Default: 1.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_ATTR_METER_TYPE" type="sai_meter_type_t">
+  Shape in bytes per second or packets per second. Default: `SAI_METER_TYPE_BYTES`.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_RATE" type="sai_uint64_t">
+  Guaranteed minimum bandwidth (bytes/sec or PPS). 0 means no minimum. Default: 0.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_BURST_RATE" type="sai_uint64_t">
+  Burst size for the guaranteed minimum rate (bytes or packets). Default: 0.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE" type="sai_uint64_t">
+  Maximum bandwidth shaping rate (bytes/sec or PPS). 0 means no limit. Default: 0.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_BURST_RATE" type="sai_uint64_t">
+  Burst size for the maximum rate (bytes or packets). Default: 0.
+</ParamField>
+
+---
+
+## Scheduler groups (`sai_scheduler_group_api_t`)
+
+Scheduler groups enable hierarchical QoS (HQoS): queues are children of groups, and groups are children of the port or other groups. Each group can have its own scheduler profile.
+
+### Attributes (`sai_scheduler_group_attr_t`)
+
+<ParamField path="SAI_SCHEDULER_GROUP_ATTR_PORT_ID" type="sai_object_id_t">
+  Port this scheduler group belongs to. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_GROUP_ATTR_LEVEL" type="sai_uint8_t">
+  Hierarchy level of this group (0 is closest to port). Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_GROUP_ATTR_MAX_CHILDS" type="sai_uint8_t">
+  Maximum number of child objects. Mandatory on create, create-only.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_GROUP_ATTR_SCHEDULER_PROFILE_ID" type="sai_object_id_t">
+  Attached scheduler profile. Default: `SAI_NULL_OBJECT_ID`.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_GROUP_ATTR_PARENT_NODE" type="sai_object_id_t">
+  Parent scheduler group or port (required when level > 0). Mandatory on create.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT" type="sai_uint32_t">
+  Read-only. Number of child queues or groups.
+</ParamField>
+
+<ParamField path="SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST" type="sai_object_list_t">
+  Read-only. List of child object IDs (`SAI_OBJECT_TYPE_SCHEDULER_GROUP` or `SAI_OBJECT_TYPE_QUEUE`).
+</ParamField>
+
+---
+
+## Buffers (`sai_buffer_api_t`)
+
+Buffer profiles control how packet memory is allocated for ingress priority groups and egress queues. The buffer API manages two object types: buffer profiles (shared templates) and ingress priority groups (per-port ingress headroom).
+
+### Ingress priority group attributes (`sai_ingress_priority_group_attr_t`)
+
+<ParamField path="SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE" type="sai_object_id_t">
+  Attached buffer profile. Default: `SAI_NULL_OBJECT_ID`.
+</ParamField>
+
+<ParamField path="SAI_INGRESS_PRIORITY_GROUP_ATTR_PORT" type="sai_object_id_t">
+  Port this priority group belongs to. Mandatory on create, create-only key.
+</ParamField>
+
+<ParamField path="SAI_INGRESS_PRIORITY_GROUP_ATTR_INDEX" type="sai_uint8_t">
+  Priority group index. Mandatory on create, create-only key.
+</ParamField>
+
+### Ingress priority group statistics (`sai_ingress_priority_group_stat_t`)
+
+| Statistic | Description |
+|---|---|
+| `SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS` | Received packets |
+| `SAI_INGRESS_PRIORITY_GROUP_STAT_BYTES` | Received bytes |
+| `SAI_INGRESS_PRIORITY_GROUP_STAT_CURR_OCCUPANCY_BYTES` | Current PG occupancy in bytes |
+| `SAI_INGRESS_PRIORITY_GROUP_STAT_WATERMARK_BYTES` | Peak PG occupancy in bytes |
+| `SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_CURR_OCCUPANCY_BYTES` | Current XOFF headroom in bytes |
+| `SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS` | Dropped packets |
+
+---
+
+## Policers (`sai_policer_api_t`)
+
+Policers implement token-bucket rate limiting. They can be applied to a port or an ACL entry to control traffic rate and burst, with separate per-color actions.
+
+### Policer modes (`sai_policer_mode_t`)
+
+| Value | Standard | Description |
+|---|---|---|
+| `SAI_POLICER_MODE_SR_TCM` | RFC 2697 | Single Rate Three Color Marker (CIR, CBS, PBS) |
+| `SAI_POLICER_MODE_TR_TCM` | RFC 2698 | Two Rate Three Color Marker (CIR, CBS, PIR, PBS) |
+| `SAI_POLICER_MODE_STORM_CONTROL` | — | Single Rate Two Color storm control (CIR, CBS) |
+
+### Color source (`sai_policer_color_source_t`)
+
+| Value | Description |
+|---|---|
+| `SAI_POLICER_COLOR_SOURCE_BLIND` | Color-blind mode — ignores existing packet color |
+| `SAI_POLICER_COLOR_SOURCE_AWARE` | Color-aware mode — respects existing packet color |
+
+### Key attributes (`sai_policer_attr_t`)
+
+<ParamField path="SAI_POLICER_ATTR_METER_TYPE" type="sai_meter_type_t">
+  Meter in bytes (`SAI_METER_TYPE_BYTES`) or packets (`SAI_METER_TYPE_PACKETS`). Mandatory on create.
+</ParamField>
+
+<ParamField path="SAI_POLICER_ATTR_MODE" type="sai_policer_mode_t">
+  Policing mode. Mandatory on create.
+</ParamField>
+
+<ParamField path="SAI_POLICER_ATTR_COLOR_SOURCE" type="sai_policer_color_source_t">
+  Color-blind or color-aware operation. Default: `SAI_POLICER_COLOR_SOURCE_AWARE`.
+</ParamField>
+
+<ParamField path="SAI_POLICER_ATTR_CIR" type="sai_uint64_t">
+  Committed Information Rate (bytes/sec or PPS). Default: 0.
+</ParamField>
+
+<ParamField path="SAI_POLICER_ATTR_CBS" type="sai_uint64_t">
+  Committed Burst Size (bytes or packets). Default: 0.
+</ParamField>
+
+<ParamField path="SAI_POLICER_ATTR_PIR" type="sai_uint64_t">
+  Peak Information Rate (bytes/sec or PPS). Valid only for `SAI_POLICER_MODE_TR_TCM`. Default: 0.
+</ParamField>
+
+<ParamField path="SAI_POLICER_ATTR_PBS" type="sai_uint64_t">
+  Peak Burst Size (bytes or packets). Default: 0.
+</ParamField>
+
+<ParamField path="SAI_POLICER_ATTR_GREEN_PACKET_ACTION" type="sai_packet_action_t">
+  Action for green (conforming) packets. Default: `SAI_PACKET_ACTION_FORWARD`.
+</ParamField>
+
+<ParamField path="SAI_POLICER_ATTR_YELLOW_PACKET_ACTION" type="sai_packet_action_t">
+  Action for yellow (exceeding) packets. Default: `SAI_PACKET_ACTION_FORWARD`.
+</ParamField>
+
+<ParamField path="SAI_POLICER_ATTR_RED_PACKET_ACTION" type="sai_packet_action_t">
+  Action for red (violating) packets. Default: `SAI_PACKET_ACTION_FORWARD`.
+</ParamField>
+
+---
+
+## WRED (`sai_wred_api_t`)
+
+WRED profiles define probabilistic packet drop thresholds for egress queues. They support separate thresholds for green, yellow, and red colored traffic, as well as ECN marking instead of dropping.
+
+### ECN marking modes (`sai_ecn_mark_mode_t`)
+
+| Value | Colors marked with ECN |
+|---|---|
+| `SAI_ECN_MARK_MODE_NONE` | None |
+| `SAI_ECN_MARK_MODE_GREEN` | Green only |
+| `SAI_ECN_MARK_MODE_YELLOW` | Yellow only |
+| `SAI_ECN_MARK_MODE_RED` | Red only |
+| `SAI_ECN_MARK_MODE_GREEN_YELLOW` | Green and yellow |
+| `SAI_ECN_MARK_MODE_ALL` | All colors |
+
+### Key attributes (`sai_wred_attr_t`)
+
+<ParamField path="SAI_WRED_ATTR_GREEN_ENABLE" type="bool">
+  Enable WRED dropping for green packets. Default: false.
+</ParamField>
+
+<ParamField path="SAI_WRED_ATTR_GREEN_MIN_THRESHOLD" type="sai_uint32_t">
+  Minimum queue depth (bytes) at which green drops begin. Default: 0 (maximum buffer size).
+</ParamField>
+
+<ParamField path="SAI_WRED_ATTR_GREEN_MAX_THRESHOLD" type="sai_uint32_t">
+  Maximum queue depth (bytes) for green drops. Default: 0 (maximum buffer size).
+</ParamField>
+
+<ParamField path="SAI_WRED_ATTR_GREEN_DROP_PROBABILITY" type="sai_uint32_t">
+  Drop probability at maximum threshold for green packets, as a percentage (0–100). Default: 100.
+</ParamField>
+
+<ParamField path="SAI_WRED_ATTR_YELLOW_ENABLE" type="bool">
+  Enable WRED dropping for yellow packets. Default: false.
+</ParamField>
+
+<ParamField path="SAI_WRED_ATTR_ECN_MARK_MODE" type="sai_ecn_mark_mode_t">
+  ECN marking mode for packet colors. When set, marks packets instead of dropping them.
+</ParamField>
+
+---
+
+## QoS setup workflow
+
+<Steps>
+  <Step title="Create QoS maps">
+    Create DSCP-to-TC and TC-to-queue maps to classify ingress traffic and assign it to queues.
+
+    ```c
+    /* Create DSCP → TC map */
+    sai_attribute_t map_attrs[2];
+    sai_qos_map_list_t map_list;
+
+    /* 8 DSCP values mapped to 4 traffic classes */
+    sai_qos_map_t entries[8];
+    entries[0].key.dscp = 0;  entries[0].value.tc = 0;
+    entries[1].key.dscp = 8;  entries[1].value.tc = 1;
+    entries[2].key.dscp = 16; entries[2].value.tc = 2;
+    entries[3].key.dscp = 24; entries[3].value.tc = 3;
+    entries[4].key.dscp = 32; entries[4].value.tc = 3;
+    entries[5].key.dscp = 40; entries[5].value.tc = 3;
+    entries[6].key.dscp = 46; entries[6].value.tc = 3; /* EF */
+    entries[7].key.dscp = 48; entries[7].value.tc = 3; /* CS6 */
+
+    map_list.count = 8;
+    map_list.list = entries;
+
+    map_attrs[0].id = SAI_QOS_MAP_ATTR_TYPE;
+    map_attrs[0].value.s32 = SAI_QOS_MAP_TYPE_DSCP_TO_TC;
+    map_attrs[1].id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    map_attrs[1].value.qosmap = map_list;
+
+    sai_object_id_t dscp_to_tc_map;
+    qos_map_api->create_qos_map(&dscp_to_tc_map, switch_id, 2, map_attrs);
+    ```
+  </Step>
+
+  <Step title="Create a scheduler profile">
+    Define the scheduling algorithm and bandwidth limits.
+
+    ```c
+    sai_attribute_t sched_attrs[3];
+    sched_attrs[0].id = SAI_SCHEDULER_ATTR_SCHEDULING_TYPE;
+    sched_attrs[0].value.s32 = SAI_SCHEDULING_TYPE_DWRR;
+    sched_attrs[1].id = SAI_SCHEDULER_ATTR_SCHEDULING_WEIGHT;
+    sched_attrs[1].value.u8 = 10;
+    sched_attrs[2].id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE;
+    sched_attrs[2].value.u64 = 1000000000ULL; /* 1 Gbps */
+
+    sai_object_id_t scheduler_id;
+    scheduler_api->create_scheduler(&scheduler_id, switch_id, 3, sched_attrs);
+    ```
+  </Step>
+
+  <Step title="Create a WRED profile">
+    Set drop thresholds for congestion management.
+
+    ```c
+    sai_attribute_t wred_attrs[4];
+    wred_attrs[0].id = SAI_WRED_ATTR_GREEN_ENABLE;
+    wred_attrs[0].value.booldata = true;
+    wred_attrs[1].id = SAI_WRED_ATTR_GREEN_MIN_THRESHOLD;
+    wred_attrs[1].value.u32 = 512000;  /* 512 KB */
+    wred_attrs[2].id = SAI_WRED_ATTR_GREEN_MAX_THRESHOLD;
+    wred_attrs[2].value.u32 = 1024000; /* 1 MB */
+    wred_attrs[3].id = SAI_WRED_ATTR_GREEN_DROP_PROBABILITY;
+    wred_attrs[3].value.u32 = 50;      /* 50% at max threshold */
+
+    sai_object_id_t wred_id;
+    wred_api->create_wred(&wred_id, switch_id, 4, wred_attrs);
+    ```
+  </Step>
+
+  <Step title="Bind profiles to queues">
+    Attach the scheduler and WRED profile to the desired egress queue.
+
+    ```c
+    /* Assume queue_id was obtained from SAI_PORT_ATTR_QOS_QUEUE_LIST */
+    sai_attribute_t q_attr;
+
+    q_attr.id = SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID;
+    q_attr.value.oid = scheduler_id;
+    queue_api->set_queue_attribute(queue_id, &q_attr);
+
+    q_attr.id = SAI_QUEUE_ATTR_WRED_PROFILE_ID;
+    q_attr.value.oid = wred_id;
+    queue_api->set_queue_attribute(queue_id, &q_attr);
+    ```
+  </Step>
+
+  <Step title="Apply QoS maps to the port">
+    Bind the DSCP-to-TC map to the ingress port so arriving packets are classified.
+
+    ```c
+    sai_attribute_t port_attr;
+    port_attr.id = SAI_PORT_ATTR_QOS_DSCP_TO_TC_MAP;
+    port_attr.value.oid = dscp_to_tc_map;
+    port_api->set_port_attribute(port_id, &port_attr);
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  Defaults for all Dot1p and DSCP maps assign traffic class 0 and color green. The TC-to-queue default maps all traffic classes to queue 0. Always configure explicit maps for production deployments.
+</Tip>

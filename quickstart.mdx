@@ -1,80 +1,307 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick Start"
+description: "Load a SAI adapter shared library and make your first API calls in C."
 ---
 
-## Get started in three steps
+This guide walks through the minimal C code needed to load a SAI adapter, create a switch object, query its port list, and shut down cleanly. All function signatures come directly from `inc/sai.h` and `inc/saitypes.h`.
 
-Get your documentation site running locally and make your first customization.
+<Note>
+  SAI does not ship an adapter itself. You need a vendor-supplied adapter shared
+  library (e.g. `libsai.so`) or a software switch adapter such as the SAI
+  simulator used in SONiC PTF testing. The steps below assume you have such a
+  library available.
+</Note>
 
-### Step 1: Set up your local environment
+<Steps>
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Step title="Implement the service method table">
 
-### Step 2: Deploy your changes
+Before initializing the adapter, you must provide a `sai_service_method_table_t`. This table gives the adapter a way to query configuration key-value pairs from the adapter host at startup—for example, the path to a vendor SDK library or an NPU config file.
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+```c
+#include <sai.h>
+#include <string.h>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+/*
+ * profile_get_value - return the value for a given profile key.
+ * The adapter calls this during initialization to read vendor settings.
+ */
+static const char *profile_get_value(
+    sai_switch_profile_id_t profile_id,
+    const char *variable)
+{
+    /* Return NULL if the key is not recognized. */
+    if (strcmp(variable, "SAI_KEY_INIT_CONFIG_FILE") == 0)
+        return "/etc/sai/init.json";
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    return NULL;
+}
 
-### Step 3: Go live
+/*
+ * profile_get_next_value - enumerate all key-value pairs in the profile.
+ * Pass variable == NULL to restart enumeration.
+ * Returns 0 if a pair was written, -1 at end of list.
+ */
+static int profile_get_next_value(
+    sai_switch_profile_id_t profile_id,
+    const char **variable,
+    const char **value)
+{
+    /* Return -1 to indicate an empty profile. */
+    return -1;
+}
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+static sai_service_method_table_t service_methods = {
+    .profile_get_value      = profile_get_value,
+    .profile_get_next_value = profile_get_next_value,
+};
+```
+
+The adapter stores the function pointers from `sai_service_method_table_t` internally and uses them at any point during its lifetime—not only during `sai_api_initialize()`.
+
+</Step>
+
+<Step title="Load the adapter and call sai_api_initialize">
+
+The adapter is a standard shared library. Load it with `dlopen`, then call `sai_api_initialize()` to complete software initialization. This step does **not** touch the forwarding hardware yet.
+
+```c
+#include <dlfcn.h>
+#include <stdio.h>
+#include <sai.h>
+
+int main(void)
+{
+    sai_status_t status;
+    void *adapter_lib;
+
+    /* Load the vendor adapter. RTLD_LAZY defers symbol resolution. */
+    adapter_lib = dlopen("/usr/lib/libsai.so", RTLD_LAZY | RTLD_GLOBAL);
+    if (!adapter_lib) {
+        fprintf(stderr, "dlopen failed: %s\n", dlerror());
+        return 1;
+    }
+
+    /*
+     * sai_api_initialize() performs software-only initialization of the
+     * adapter module. flags must be 0 (reserved for future use).
+     */
+    status = sai_api_initialize(0, &service_methods);
+    if (status != SAI_STATUS_SUCCESS) {
+        fprintf(stderr, "sai_api_initialize failed: %d\n", status);
+        dlclose(adapter_lib);
+        return 1;
+    }
+
+    /* ... continued in the next steps ... */
+}
+```
+
+<Note>
+  `sai_api_initialize()` is **not** SDK initialization and does not communicate
+  with the forwarding element. Forwarding element initialization happens later
+  when you call `create_switch` on the switch API.
+</Note>
+
+</Step>
+
+<Step title="Query the switch API method table">
+
+After initialization, use `sai_api_query()` to retrieve a pointer to the method table for the API you need. Each call takes a `sai_api_t` enum value and fills in a pointer to the corresponding struct of function pointers.
+
+```c
+#include <sai.h>
+#include <saiswitch.h>
+
+sai_switch_api_t *switch_api = NULL;
+
+status = sai_api_query(SAI_API_SWITCH, (void **)&switch_api);
+if (status != SAI_STATUS_SUCCESS) {
+    fprintf(stderr, "sai_api_query(SAI_API_SWITCH) failed: %d\n", status);
+    sai_api_uninitialize();
+    dlclose(adapter_lib);
+    return 1;
+}
+```
+
+The method table pointer (`switch_api`) remains valid until `sai_api_uninitialize()` is called. Do not free it manually.
+
+</Step>
+
+<Step title="Create a switch object">
+
+Creating a switch object initializes the forwarding element. This is when the adapter contacts the hardware. Pass a list of `sai_attribute_t` pairs to configure initial switch behavior.
+
+```c
+#include <sai.h>
+#include <saiswitch.h>
+
+sai_object_id_t switch_id = SAI_NULL_OBJECT_ID;
+
+/*
+ * sai_attribute_t pairs configure the switch at creation time.
+ * SAI_SWITCH_ATTR_INIT_SWITCH = true tells the adapter to perform
+ * full hardware initialization (as opposed to connecting to an
+ * already-initialized switch).
+ */
+sai_attribute_t switch_attrs[1];
+switch_attrs[0].id             = SAI_SWITCH_ATTR_INIT_SWITCH;
+switch_attrs[0].value.booldata = true;
+
+status = switch_api->create_switch(
+    &switch_id,
+    1,              /* attr_count */
+    switch_attrs    /* attr_list  */
+);
+if (status != SAI_STATUS_SUCCESS) {
+    fprintf(stderr, "create_switch failed: %d\n", status);
+    sai_api_uninitialize();
+    dlclose(adapter_lib);
+    return 1;
+}
+
+printf("Switch created, object id: 0x%lx\n", (unsigned long)switch_id);
+```
+
+`switch_id` is an opaque `uint64_t` (`sai_object_id_t`) that uniquely identifies the switch instance. Pass it to subsequent calls that need to reference the switch.
+
+</Step>
+
+<Step title="Query the port list">
+
+After the switch is created, read the list of available SAI ports using `SAI_SWITCH_ATTR_PORT_LIST`. The caller allocates the buffer; if it is too small, the adapter returns `SAI_STATUS_BUFFER_OVERFLOW` with the required count filled in.
+
+```c
+#include <sai.h>
+#include <saiswitch.h>
+
+sai_attribute_t  attr;
+sai_object_id_t  port_list_buf[256];
+
+attr.id                  = SAI_SWITCH_ATTR_PORT_LIST;
+attr.value.objlist.count = 256;
+attr.value.objlist.list  = port_list_buf;
+
+status = switch_api->get_switch_attribute(
+    switch_id,
+    1,      /* attr_count */
+    &attr   /* attr_list  */
+);
+
+if (status == SAI_STATUS_BUFFER_OVERFLOW) {
+    /*
+     * The adapter has written the required count into
+     * attr.value.objlist.count. Reallocate and retry.
+     */
+    fprintf(stderr, "port list buffer overflow, need %u entries\n",
+            attr.value.objlist.count);
+} else if (status == SAI_STATUS_SUCCESS) {
+    uint32_t num_ports = attr.value.objlist.count;
+    printf("Found %u SAI ports:\n", num_ports);
+
+    for (uint32_t i = 0; i < num_ports; i++) {
+        printf("  port[%u] = 0x%lx\n", i,
+               (unsigned long)port_list_buf[i]);
+    }
+}
+```
+
+Each entry in the list is a `sai_object_id_t` for a port object. You can pass these IDs to `sai_api_query(SAI_API_PORT, ...)` to get port-level attributes such as `SAI_PORT_ATTR_HW_LANE_LIST`, which maps SAI ports to physical hardware lanes.
+
+</Step>
+
+<Step title="Uninitialize the adapter">
+
+When shutting down, call `sai_api_uninitialize()` before unloading the shared library. After this call, any method table pointers obtained via `sai_api_query()` become invalid.
+
+```c
+status = sai_api_uninitialize();
+if (status != SAI_STATUS_SUCCESS) {
+    fprintf(stderr, "sai_api_uninitialize failed: %d\n", status);
+}
+
+dlclose(adapter_lib);
+```
+
+In a multi-adapter-host deployment, only the host that called `create_switch` with `SAI_SWITCH_ATTR_INIT_SWITCH = true` is responsible for removing the switch object before uninitializing. Other hosts that connected to an already-initialized switch should disconnect without removing the switch.
+
+</Step>
+
+</Steps>
+
+## Putting it together
+
+A minimal working skeleton:
+
+```c
+#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+#include <sai.h>
+#include <saiswitch.h>
+
+static const char *profile_get_value(sai_switch_profile_id_t id,
+                                     const char *variable)
+{
+    (void)id; (void)variable;
+    return NULL;
+}
+
+static int profile_get_next_value(sai_switch_profile_id_t id,
+                                  const char **variable,
+                                  const char **value)
+{
+    (void)id; (void)variable; (void)value;
+    return -1;
+}
+
+int main(void)
+{
+    sai_status_t           status;
+    sai_switch_api_t      *switch_api = NULL;
+    sai_object_id_t        switch_id  = SAI_NULL_OBJECT_ID;
+    sai_attribute_t        attr;
+    sai_object_id_t        ports[256];
+
+    sai_service_method_table_t services = {
+        .profile_get_value      = profile_get_value,
+        .profile_get_next_value = profile_get_next_value,
+    };
+
+    void *lib = dlopen("/usr/lib/libsai.so", RTLD_LAZY | RTLD_GLOBAL);
+    if (!lib) { fprintf(stderr, "%s\n", dlerror()); return 1; }
+
+    status = sai_api_initialize(0, &services);
+    if (status != SAI_STATUS_SUCCESS) return 1;
+
+    status = sai_api_query(SAI_API_SWITCH, (void **)&switch_api);
+    if (status != SAI_STATUS_SUCCESS) return 1;
+
+    attr.id              = SAI_SWITCH_ATTR_INIT_SWITCH;
+    attr.value.booldata  = true;
+    status = switch_api->create_switch(&switch_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS) return 1;
+
+    attr.id                  = SAI_SWITCH_ATTR_PORT_LIST;
+    attr.value.objlist.count = 256;
+    attr.value.objlist.list  = ports;
+    status = switch_api->get_switch_attribute(switch_id, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+        printf("%u ports found\n", attr.value.objlist.count);
+
+    sai_api_uninitialize();
+    dlclose(lib);
+    return 0;
+}
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Architecture" icon="layer-group" href="/architecture">
+    Understand the adapter loading model and object lifecycle in depth.
+  </Card>
+  <Card title="Introduction" icon="book-open" href="/introduction">
+    Review the key definitions and design goals behind SAI.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
